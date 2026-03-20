@@ -1,0 +1,867 @@
+================================================================================
+AJOUT PRÉDICTION PRIX CIBLE (PRICE TARGET) - ARCHITECTURE V10
+================================================================================
+Date: 2026-03-20
+Objectif: Prédire non seulement la DIRECTION mais aussi le PRIX CIBLE
+
+
+================================================================================
+1. ÉTAT ACTUEL V9
+================================================================================
+
+MODÈLE ACTUEL: Classification 3 classes
+---------------------------------------
+Input: Features (69 BTC, 106 ETH/SOL)
+Output:
+  - 0 (BUY) si future_price > current_price + 2%
+  - 1 (SELL) si future_price < current_price - 2%
+  - 2 (HOLD) sinon
+
+LIMITATIONS:
+❌ Ne prédit pas le prix exact
+❌ Ne sait pas si mouvement sera +2.5% ou +15%
+❌ TP/SL fixes, pas adaptés à magnitude attendue
+❌ Ne peut pas filtrer trades faible potentiel (+2.1% vs +10%)
+
+
+================================================================================
+2. POURQUOI AJOUTER PRICE TARGET?
+================================================================================
+
+USE CASES CRITIQUES:
+-------------------
+
+1. TP/SL DYNAMIQUES ⭐⭐⭐
+   Actuellement:
+   - BTC: TP 5%, SL 3% (FIXE)
+   - ETH: TP 5%, SL 3% (FIXE)
+
+   Avec price target:
+   - Si prédit +2.5% → TP 3%, SL 2% (mouvement faible)
+   - Si prédit +8% → TP 7%, SL 3% (mouvement fort)
+   - Ratio risque/récompense optimal
+
+2. POSITION SIZING ⭐⭐⭐
+   Actuellement:
+   - Taille fixe 95% sur chaque trade
+
+   Avec price target:
+   - Mouvement prédit +2% → Position 50%
+   - Mouvement prédit +5% → Position 75%
+   - Mouvement prédit +10% → Position 100%
+   - Kelly criterion optimisé
+
+3. FILTRAGE TRADES FAIBLE POTENTIEL ⭐⭐
+   Actuellement:
+   - Trade si BUY + confidence > 50%
+
+   Avec price target:
+   - Trade si BUY + confidence > 50% + price_target > 3%
+   - Skip trades BUY mais faible magnitude
+
+4. MEILLEURE COMPRÉHENSION MODÈLE ⭐⭐
+   - Savoir COMBIEN le modèle anticipe
+   - Calibrer confiance vs magnitude
+   - Détecter signaux forts vs faibles
+
+5. BACKTESTING PLUS PRÉCIS ⭐
+   - Simuler TP/SL adaptatifs
+   - Comparer prix prédit vs prix réel
+   - Métriques de précision (MAE, RMSE)
+
+
+================================================================================
+3. ARCHITECTURES POSSIBLES
+================================================================================
+
+┌────────────────────────────────────────────────────────────────┐
+│ OPTION A: DUAL MODEL (2 modèles séparés)                       │
+├────────────────────────────────────────────────────────────────┤
+│ Model 1: Classification (BUY/SELL/HOLD)                        │
+│ Model 2: Regression (Price Target)                             │
+│                                                                │
+│ Workflow:                                                      │
+│ 1. Model 1 prédit direction + confidence                       │
+│ 2. Si direction = BUY et confidence > threshold:               │
+│    → Model 2 prédit prix cible                                 │
+│ 3. Décision trade basée sur les deux                           │
+│                                                                │
+│ AVANTAGES:                                                     │
+│ ✅ Simple conceptuellement                                     │
+│ ✅ Spécialisation des modèles                                  │
+│ ✅ Facile à débugger                                            │
+│ ✅ Peut utiliser features différentes                          │
+│                                                                │
+│ INCONVÉNIENTS:                                                 │
+│ ❌ 2x temps training                                            │
+│ ❌ 2x modèles à maintenir                                       │
+│ ❌ Risque incohérence (BUY + price target négatif)             │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ OPTION B: MULTI-OUTPUT MODEL (1 modèle, 2 outputs)             │
+├────────────────────────────────────────────────────────────────┤
+│ Input: Features (même qu'actuellement)                         │
+│ Output 1: Direction (classification 3 classes)                 │
+│ Output 2: Price change % (regression)                          │
+│                                                                │
+│ Workflow:                                                      │
+│ 1. Single forward pass                                         │
+│ 2. Output 1 = direction, confidence                            │
+│ 3. Output 2 = magnitude estimée                                │
+│                                                                │
+│ AVANTAGES:                                                     │
+│ ✅ Cohérence garantie                                          │
+│ ✅ Plus efficace (1 seul modèle)                               │
+│ ✅ Features partagées                                          │
+│ ✅ Loss function combinée                                      │
+│                                                                │
+│ INCONVÉNIENTS:                                                 │
+│ ❌ Plus complexe à implémenter                                  │
+│ ❌ XGBoost pas nativement multi-output                          │
+│ ❌ Nécessite framework custom                                   │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ OPTION C: REGRESSION DIRECTE (remplace classification)         │
+├────────────────────────────────────────────────────────────────┤
+│ Input: Features                                                │
+│ Output: Price change % (regression continue)                   │
+│                                                                │
+│ Workflow:                                                      │
+│ 1. Prédire directement % change                                │
+│ 2. Dériver direction:                                          │
+│    - BUY si prédit > +2%                                       │
+│    - SELL si prédit < -2%                                      │
+│    - HOLD sinon                                                │
+│ 3. Magnitude = valeur absolue prédiction                       │
+│                                                                │
+│ AVANTAGES:                                                     │
+│ ✅ Plus simple (1 seul output)                                 │
+│ ✅ Cohérence totale                                            │
+│ ✅ Information maximale                                        │
+│ ✅ Facile à implémenter (XGBoost regression)                   │
+│                                                                │
+│ INCONVÉNIENTS:                                                 │
+│ ❌ Perd classification explicite                                │
+│ ❌ Peut être moins précis sur direction                         │
+│ ❌ Threshold direction devient hyperparamètre                   │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ OPTION D: QUANTILE REGRESSION (prédiction par intervalles)     │
+├────────────────────────────────────────────────────────────────┤
+│ Input: Features                                                │
+│ Output: 3 quantiles (Q10, Q50, Q90)                            │
+│                                                                │
+│ Workflow:                                                      │
+│ 1. Prédire 3 quantiles:                                        │
+│    - Q10: pessimiste (-2%)                                     │
+│    - Q50: médiane (+3%)                                        │
+│    - Q90: optimiste (+8%)                                      │
+│ 2. Range = Q90 - Q10 → incertitude                             │
+│ 3. Décision basée sur Q50 et range                             │
+│                                                                │
+│ AVANTAGES:                                                     │
+│ ✅ Capture incertitude                                         │
+│ ✅ Meilleure gestion risque                                    │
+│ ✅ Adaptabilité haute                                          │
+│                                                                │
+│ INCONVÉNIENTS:                                                 │
+│ ❌ Très complexe                                                │
+│ ❌ 3x prédictions                                               │
+│ ❌ Difficile à interpréter                                      │
+└────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+4. RECOMMANDATION: OPTION A (DUAL MODEL) pour V10.1
+================================================================================
+
+POURQUOI OPTION A?
+-----------------
+
+✅ Sûr et progressif:
+   - Garde notre classification qui MARCHE (+70% ETH)
+   - Ajoute regression en complément
+   - Pas de risque de casser ce qui fonctionne
+
+✅ Simple à implémenter:
+   - Copier architecture actuelle
+   - Changer objective: multi:softprob → reg:squarederror
+   - Entraîner séparément
+
+✅ Flexible:
+   - Peut utiliser features différentes
+   - Peut optimiser séparément
+   - Facile à débugger
+
+✅ Meilleure option pour commencer:
+   - Valider concept
+   - Si ça marche, merger plus tard (Option B)
+
+
+IMPLÉMENTATION DUAL MODEL:
+-------------------------
+
+MODEL 1: CLASSIFICATION (actuel V9)
+-----------------------------------
+Input: Features V9 (69 BTC, 106 ETH/SOL)
+Output: [BUY, SELL, HOLD] + probabilities
+Target:
+  - 0 (BUY) si +7d > +2%
+  - 1 (SELL) si +7d < -2%
+  - 2 (HOLD) sinon
+XGBoost params: multi:softprob
+
+
+MODEL 2: REGRESSION (nouveau)
+------------------------------
+Input: MÊMES Features V9
+Output: Price change % (continuous)
+Target: (price_t+7 - price_t) / price_t * 100
+XGBoost params: reg:squarederror
+
+Loss function: MSE (Mean Squared Error)
+Métrique: MAE (Mean Absolute Error), RMSE
+
+Optimisation Optuna:
+- Même search space que classification
+- Mais objectif = minimiser MAE sur validation
+
+
+WORKFLOW TRADING:
+----------------
+
+1. Fetch current data
+2. Calculate features
+3. Run Model 1 (classification):
+   → direction, confidence
+4. Run Model 2 (regression):
+   → price_change_pct
+5. Decision logic:
+
+   if direction == BUY and confidence > threshold:
+       if abs(price_change_pct) > min_magnitude:  # ex: 3%
+           # TRADE
+           tp = current_price * (1 + price_change_pct * 0.8)
+           sl = current_price * (1 - price_change_pct * 0.4)
+           position_size = kelly_criterion(confidence, price_change_pct)
+       else:
+           # SKIP - faible potentiel
+   else:
+       # NO TRADE
+
+
+================================================================================
+5. FEATURES ADDITIONNELLES POUR REGRESSION
+================================================================================
+
+Les features actuelles sont bonnes, mais pour regression on peut ajouter:
+
+A. VOLATILITY FEATURES (crucial pour magnitude)
+----------------------------------------------
+1. ATR (Average True Range) - déjà présent
+2. Bollinger Band Width
+3. Historical volatility (5, 10, 20 jours)
+4. Volatility percentile (volatilité actuelle vs historique)
+5. Volatility regime (high/low)
+
+Raison: Magnitude mouvements corrélée à volatilité
+
+B. VOLUME STRENGTH
+------------------
+1. Volume ratio (current / avg)
+2. Volume trend (increasing/decreasing)
+3. OBV (On Balance Volume) slope
+4. VWAP distance
+
+Raison: Volume fort → mouvements amples
+
+C. MOMENTUM STRENGTH
+-------------------
+1. RSI extreme (>70 ou <30)
+2. MACD histogram magnitude
+3. Rate of change (ROC)
+4. Acceleration (2nd derivative)
+
+Raison: Momentum fort → continuation potentielle
+
+D. SUPPORT/RESISTANCE DISTANCE
+------------------------------
+1. Distance to nearest S/R level
+2. S/R strength (combien de fois testé)
+3. Breakout potential
+
+Raison: Proximité S/R limite magnitude
+
+
+TOTAL FEATURES REGRESSION: ~80-90
+- Base V9: 69 (BTC) / 106 (ETH/SOL)
+- + Volatility: 5
+- + Volume strength: 4
+- + Momentum strength: 4
+- + S/R: 3
+
+
+================================================================================
+6. TARGETS & LABELS
+================================================================================
+
+TARGET REGRESSION:
+-----------------
+
+Option 1: Simple % change (RECOMMANDÉ V10.1)
+---------------------------------------------
+target = (price_t+7 - price_t) / price_t * 100
+
+Exemple:
+- Prix actuel: $100
+- Prix +7j: $105
+- Target: +5.0%
+
+Avantages:
+✅ Simple
+✅ Directement actionnable
+✅ Normalisé (comparable entre cryptos)
+
+Inconvénients:
+❌ Asymétrique (max loss -100%, gain illimité)
+
+
+Option 2: Log returns
+---------------------
+target = log(price_t+7 / price_t) * 100
+
+Avantages:
+✅ Symétrique
+✅ Meilleures propriétés statistiques
+✅ Additive (combinable)
+
+Inconvénients:
+❌ Moins intuitif
+❌ Conversion nécessaire
+
+
+RECOMMANDATION: Option 1 (simple %) pour V10.1
+
+
+RANGE DES TARGETS:
+-----------------
+
+Analyse V9 (7 jours lookahead, 1d timeframe):
+- Bitcoin: Typical range [-5%, +5%], extremes [-15%, +20%]
+- Ethereum: Typical range [-7%, +7%], extremes [-25%, +30%]
+- Solana: Typical range [-12%, +12%], extremes [-40%, +50%]
+
+Outliers treatment:
+- Winsorize à ±30% (clipper extremes)
+- Évite que modèle overfit sur events rares
+
+
+================================================================================
+7. MÉTRIQUES D'ÉVALUATION REGRESSION
+================================================================================
+
+MÉTRIQUES STANDARD:
+------------------
+
+1. MAE (Mean Absolute Error) ⭐⭐⭐
+   = moyenne(|prédit - réel|)
+
+   Interprétation:
+   - MAE = 2.5% → En moyenne erreur de 2.5%
+   - Plus BAS = meilleur
+
+   Avantage: Facile à interpréter
+
+2. RMSE (Root Mean Squared Error)
+   = sqrt(moyenne((prédit - réel)²))
+
+   Interprétation:
+   - Pénalise plus les grosses erreurs
+   - RMSE > MAE = présence outliers
+
+   Avantage: Pénalise erreurs graves
+
+3. R² (Coefficient de détermination)
+   = 1 - (variance erreur / variance target)
+
+   Interprétation:
+   - R² = 0.5 → Explique 50% variance
+   - R² < 0 → Pire que moyenne simple
+
+   Avantage: % variance expliquée
+
+
+MÉTRIQUES CUSTOM TRADING:
+-------------------------
+
+4. Directional Accuracy ⭐⭐⭐
+   = % prédictions bon signe
+
+   Exemple:
+   - Prédit +3%, réel +1% → CORRECT (même signe)
+   - Prédit +3%, réel -1% → INCORRECT
+
+   Critique: Direction plus importante que magnitude exacte
+
+5. Magnitude Accuracy (Buckets) ⭐⭐
+   = % prédictions dans bon bucket
+
+   Buckets:
+   - Small: |change| < 2%
+   - Medium: 2% < |change| < 5%
+   - Large: |change| > 5%
+
+   Exemple:
+   - Prédit +6%, réel +4% → Buckets (Large, Medium) = PROCHE
+   - Prédit +6%, réel +0.5% → Buckets (Large, Small) = ERREUR
+
+6. Trading P&L Simulation ⭐⭐⭐
+   = Backtest avec TP/SL basés sur prédictions
+
+   ROI avec:
+   - TP = price_target * 0.8
+   - SL = price_target * 0.4
+
+   Métrique ultime: Profitabilité réelle
+
+7. Calibration Plot
+   = Prédit vs Réel scatter plot
+
+   Idéal: Points sur diagonale
+   Biaisé haut: Sur-estime
+   Biaisé bas: Sous-estime
+
+
+OBJECTIFS V10.1:
+---------------
+- MAE < 3% (excellent si < 2%)
+- RMSE < 4%
+- R² > 0.3 (difficile en crypto!)
+- Directional Accuracy > 60%
+- Trading P&L > classification seule
+
+
+================================================================================
+8. IMPLÉMENTATION CODE
+================================================================================
+
+STRUCTURE:
+---------
+
+crypto_v10_multi_tf/
+├── models/
+│   ├── classification_model.py     # Model 1 (actuel)
+│   ├── regression_model.py         # Model 2 (NOUVEAU)
+│   ├── dual_model_ensemble.py      # Combine les 2
+│   └── saved/
+│       ├── btc_1d_classifier.pkl
+│       ├── btc_1d_regressor.pkl    # NOUVEAU
+│       ├── eth_1d_classifier.pkl
+│       ├── eth_1d_regressor.pkl    # NOUVEAU
+│       └── sol_1d_regressor.pkl    # NOUVEAU
+
+
+PSEUDO-CODE TRAINING:
+--------------------
+
+```python
+# regression_model.py
+
+def train_regressor(crypto, timeframe='1d'):
+    """Train price target regression model"""
+
+    # Prepare data (même que classification)
+    X, y_class, dates, prices = prepare_data(crypto, timeframe)
+
+    # Créer target regression
+    y_reg = []
+    for i in range(len(prices) - LOOKAHEAD):
+        current = prices[i]
+        future = prices[i + LOOKAHEAD]
+        pct_change = (future - current) / current * 100
+
+        # Winsorize extremes
+        pct_change = np.clip(pct_change, -30, 30)
+
+        y_reg.append(pct_change)
+
+    y_reg = np.array(y_reg)
+
+    # Split temporel
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y_reg[:split_idx], y_reg[split_idx:]
+
+    # XGBoost params REGRESSION
+    params = {
+        'objective': 'reg:squarederror',
+        'eval_metric': 'mae',
+        'tree_method': 'hist',
+        'device': 'cuda',
+
+        # Régularisation (même que classification)
+        'learning_rate': 0.01,
+        'max_depth': 3,
+        'min_child_weight': 20,
+        'gamma': 5.0,
+        'reg_alpha': 15.0,
+        'reg_lambda': 15.0,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+
+        'n_estimators': 2000
+    }
+
+    # Train
+    model = xgb.XGBRegressor(**params)
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_test, y_test)],
+        early_stopping_rounds=50,
+        verbose=False
+    )
+
+    # Evaluate
+    y_pred = model.predict(X_test)
+
+    mae = np.mean(np.abs(y_pred - y_test))
+    rmse = np.sqrt(np.mean((y_pred - y_test)**2))
+
+    # Directional accuracy
+    dir_correct = np.sum(np.sign(y_pred) == np.sign(y_test))
+    dir_acc = dir_correct / len(y_test)
+
+    print(f"MAE: {mae:.2f}%")
+    print(f"RMSE: {rmse:.2f}%")
+    print(f"Directional Accuracy: {dir_acc*100:.2f}%")
+
+    # Save
+    model.save_model(f"models/saved/{crypto}_1d_regressor.json")
+
+    return model
+```
+
+
+PSEUDO-CODE PREDICTION:
+----------------------
+
+```python
+# dual_model_ensemble.py
+
+class DualModelPredictor:
+    def __init__(self, crypto, timeframe='1d'):
+        self.classifier = load_model(f"{crypto}_{timeframe}_classifier.pkl")
+        self.regressor = load_model(f"{crypto}_{timeframe}_regressor.pkl")
+
+        # Thresholds
+        self.confidence_threshold = 0.50  # ETH
+        self.min_magnitude = 3.0  # % minimum
+
+    def predict(self, features):
+        """Prédire direction + price target"""
+
+        # Model 1: Classification
+        direction = self.classifier.predict(features)[0]
+        proba = self.classifier.predict_proba(features)[0]
+        confidence = np.max(proba)
+
+        # Model 2: Regression
+        price_change_pct = self.regressor.predict(features)[0]
+
+        return {
+            'direction': direction,  # 0, 1, 2
+            'confidence': confidence,  # 0-1
+            'price_target_pct': price_change_pct,  # %
+            'magnitude': abs(price_change_pct)
+        }
+
+    def should_trade(self, prediction, current_price):
+        """Décision trade basée sur les 2 modèles"""
+
+        # Check direction + confidence
+        if prediction['direction'] != 0:  # Pas BUY
+            return False, None
+
+        if prediction['confidence'] < self.confidence_threshold:
+            return False, None
+
+        # Check magnitude
+        if prediction['magnitude'] < self.min_magnitude:
+            return False, None  # Skip faible potentiel
+
+        # Calculate TP/SL dynamiques
+        target_pct = prediction['price_target_pct']
+
+        tp_price = current_price * (1 + target_pct * 0.75)
+        sl_price = current_price * (1 - abs(target_pct) * 0.35)
+
+        # Position sizing (Kelly-inspired)
+        edge = prediction['confidence'] - 0.5
+        position_pct = min(edge * prediction['magnitude'] / 5, 0.95)
+
+        return True, {
+            'entry_price': current_price,
+            'tp_price': tp_price,
+            'sl_price': sl_price,
+            'position_size_pct': position_pct,
+            'expected_change': target_pct,
+            'confidence': prediction['confidence']
+        }
+```
+
+
+PSEUDO-CODE BACKTEST:
+--------------------
+
+```python
+def backtest_dual_model(crypto, start_date='2025-01-01'):
+    """Backtest avec price target predictions"""
+
+    predictor = DualModelPredictor(crypto)
+
+    # Data 2025
+    X, y, dates, prices = load_test_data(crypto, start_date)
+
+    capital = 1000.0
+    position = None
+    trades = []
+
+    for i in range(len(X)):
+        price = prices[i]
+
+        # Predict
+        pred = predictor.predict(X[i])
+
+        # Check exit si position ouverte
+        if position:
+            # Check TP
+            if price >= position['tp_price']:
+                pnl = (price - position['entry']) / position['entry']
+                profit = capital * position['size'] * pnl
+                capital += profit
+                trades.append({
+                    'exit': 'TP',
+                    'profit': profit,
+                    'expected': position['expected'],
+                    'actual': pnl * 100
+                })
+                position = None
+
+            # Check SL
+            elif price <= position['sl_price']:
+                pnl = (price - position['entry']) / position['entry']
+                loss = capital * position['size'] * pnl
+                capital += loss
+                trades.append({
+                    'exit': 'SL',
+                    'profit': loss,
+                    'expected': position['expected'],
+                    'actual': pnl * 100
+                })
+                position = None
+
+        # Check entry
+        if position is None:
+            should_trade, trade_params = predictor.should_trade(pred, price)
+
+            if should_trade:
+                position = {
+                    'entry': price,
+                    'tp_price': trade_params['tp_price'],
+                    'sl_price': trade_params['sl_price'],
+                    'size': trade_params['position_size_pct'] / 100,
+                    'expected': trade_params['expected_change']
+                }
+
+    # Analyse
+    roi = (capital - 1000) / 1000 * 100
+
+    # Compare expected vs actual
+    expected_avg = np.mean([t['expected'] for t in trades])
+    actual_avg = np.mean([t['actual'] for t in trades])
+
+    print(f"ROI: {roi:.2f}%")
+    print(f"Trades: {len(trades)}")
+    print(f"Avg Expected: {expected_avg:.2f}%")
+    print(f"Avg Actual: {actual_avg:.2f}%")
+    print(f"Prediction accuracy: {actual_avg/expected_avg*100:.1f}%")
+```
+
+
+================================================================================
+9. TIMELINE IMPLÉMENTATION
+================================================================================
+
+PHASE 1: Setup (Jour 1)
+-----------------------
+[ ] Copier data preparation V9
+[ ] Créer regression_model.py
+[ ] Tester sur sample data
+
+PHASE 2: Training Regressor (Jour 2)
+------------------------------------
+[ ] Train BTC regressor
+[ ] Train ETH regressor
+[ ] Train SOL regressor
+[ ] Optuna optimization
+[ ] Évaluer MAE, RMSE, directional accuracy
+
+PHASE 3: Dual Model Ensemble (Jour 3)
+-------------------------------------
+[ ] Créer DualModelPredictor class
+[ ] Implémenter decision logic
+[ ] Dynamic TP/SL calculation
+[ ] Position sizing
+
+PHASE 4: Backtest (Jour 4)
+--------------------------
+[ ] Backtest BTC avec dual model
+[ ] Backtest ETH avec dual model
+[ ] Backtest SOL avec dual model
+[ ] Compare vs V9 classification seule
+
+PHASE 5: Analysis & Tuning (Jour 5)
+-----------------------------------
+[ ] Analyser prédictions vs réalité
+[ ] Calibration plots
+[ ] Tune min_magnitude threshold
+[ ] Tune TP/SL ratios
+[ ] Optimize position sizing
+
+
+================================================================================
+10. MÉTRIQUES SUCCÈS
+================================================================================
+
+OBJECTIFS MINIMAUX (pour valider concept):
+------------------------------------------
+
+Regression Performance:
+- MAE < 3.5%
+- RMSE < 5%
+- Directional Accuracy > 58%
+
+Trading Performance (vs V9 classification):
+- ROI > V9 baseline
+- Sharpe ratio > V9
+- Max drawdown < V9
+- Win rate similaire ou meilleur
+
+Magnitude Prediction:
+- Expected vs Actual correlation > 0.4
+- Systematic bias < 0.5% (pas sur/sous-estimation)
+
+
+OBJECTIFS STRETCH (excellence):
+-------------------------------
+
+Regression Performance:
+- MAE < 2%
+- RMSE < 3%
+- Directional Accuracy > 65%
+
+Trading Performance:
+- ROI +20% vs V9 (ex: ETH 70% → 84%)
+- Sharpe ratio +0.5
+- Max drawdown -5%
+
+Magnitude Prediction:
+- Correlation > 0.6
+- Bias < 0.2%
+
+
+================================================================================
+11. RISQUES & MITIGATION
+================================================================================
+
+RISQUE 1: Regression moins précise que classification
+-----------------------------------------------------
+Probabilité: HAUTE
+Impact: MOYEN
+
+Mitigation:
+- Garder classification comme filtre principal
+- Regression juste pour magnitude/TP/SL
+- Fallback sur TP/SL fixes si low confidence regression
+
+RISQUE 2: Overfitting sur magnitude
+-----------------------------------
+Probabilité: MOYENNE
+Impact: ÉLEVÉ
+
+Mitigation:
+- Régularisation TRÈS agressive
+- Validation temporelle stricte
+- Winsorize extremes
+- MAE plutôt que MSE (moins sensible outliers)
+
+RISQUE 3: Systematic bias (sur/sous-estimation)
+-----------------------------------------------
+Probabilité: MOYENNE
+Impact: MOYEN
+
+Mitigation:
+- Monitorer bias régulièrement
+- Calibration plots
+- Adjust predictions si bias détecté
+
+RISQUE 4: Latency (2 modèles = 2x plus lent)
+--------------------------------------------
+Probabilité: FAIBLE
+Impact: FAIBLE
+
+Mitigation:
+- Optimiser inference
+- GPU inference
+- Batch predictions
+- Cache si nécessaire
+
+
+================================================================================
+12. CONCLUSION & NEXT STEPS
+================================================================================
+
+RECOMMANDATION FINALE:
+---------------------
+
+✅ IMPLÉMENTER Dual Model (Option A) dans V10.1
+
+RAISON:
+- Amélioration significative attendue
+- Sûr (garde classification qui marche)
+- Facile à implémenter
+- Haute valeur ajoutée (TP/SL dynamiques, position sizing)
+
+ROADMAP:
+-------
+1. V10.1: Dual Model (Classification + Regression)
+2. V10.2: Si succès, considérer merger en Multi-Output (Option B)
+3. V10.3: Considérer Quantile Regression si besoin incertitude
+
+PRIORISATION:
+------------
+⭐⭐⭐ HAUTE PRIORITÉ
+
+Pourquoi:
+- TP/SL dynamiques = critique pour optimisation
+- Position sizing = gestion risque améliorée
+- Filtrage magnitude = moins de trades faible potentiel
+- Relativement facile à implémenter
+
+INTÉGRATION V10:
+---------------
+Phase 2 (Features) → Ajouter volatility/volume features
+Phase 3 (Modèle) → Train dual model (classifier + regressor)
+Phase 4 (Backtest) → Backtest avec TP/SL dynamiques
+
+NEXT IMMEDIATE STEP:
+-------------------
+Créer regression_model.py et tester sur BTC
+
+
+================================================================================
+FIN DU DOCUMENT
+================================================================================
