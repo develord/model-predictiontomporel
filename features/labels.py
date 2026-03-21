@@ -77,25 +77,99 @@ def calculate_price_target(df: pd.DataFrame, lookahead_candles: int) -> pd.Serie
     return df['close'].shift(-lookahead_candles)
 
 
+def apply_triple_barrier(
+    df: pd.DataFrame,
+    tp_pct: float = 1.5,
+    sl_pct: float = 0.75,
+    lookahead_candles: int = 7
+) -> pd.DataFrame:
+    """
+    Apply Triple Barrier Labeling (Professional Quant Method)
+
+    Instead of predicting magnitude, predict trade outcome:
+    +1: TP hit first (profitable trade)
+    -1: SL hit first (losing trade)
+     0: Timeout (neither hit within lookahead)
+
+    This is MUCH more learnable than regression on raw returns.
+
+    Args:
+        df: DataFrame with OHLCV data
+        tp_pct: Take profit threshold (e.g., 1.5%)
+        sl_pct: Stop loss threshold (e.g., 0.75%)
+        lookahead_candles: Max candles to wait for TP/SL
+
+    Returns:
+        DataFrame with 'triple_barrier_label' column
+    """
+    result = df.copy()
+    labels = []
+
+    for i in range(len(df)):
+        if i + lookahead_candles >= len(df):
+            # Not enough future data
+            labels.append(np.nan)
+            continue
+
+        entry_price = df['close'].iloc[i]
+        tp_price = entry_price * (1 + tp_pct / 100)
+        sl_price = entry_price * (1 - sl_pct / 100)
+
+        # Check future candles
+        label = 0  # Default: timeout
+        for j in range(1, lookahead_candles + 1):
+            if i + j >= len(df):
+                break
+
+            future_high = df['high'].iloc[i + j]
+            future_low = df['low'].iloc[i + j]
+
+            # TP hit first
+            if future_high >= tp_price:
+                label = 1
+                break
+            # SL hit first
+            elif future_low <= sl_price:
+                label = -1
+                break
+
+        labels.append(label)
+
+    result['triple_barrier_label'] = labels
+    return result
+
+
 def generate_regression_labels(
     df: pd.DataFrame,
     lookahead_candles: int,
-    clip_percentile: float = 99.0
+    clip_percentile: float = 99.0,
+    use_triple_barrier: bool = True,
+    tp_pct: float = 1.5,
+    sl_pct: float = 0.75
 ) -> pd.DataFrame:
     """
-    Generate regression labels (price_target_pct)
+    Generate regression labels (price_target_pct) OR triple barrier labels
+
+    V10 IMPROVED: Now supports Triple Barrier labeling for better learnability
 
     Args:
         df: DataFrame with 'close' column
         lookahead_candles: How many periods to look ahead
         clip_percentile: Percentile to clip outliers (default 99%)
+        use_triple_barrier: Use triple barrier instead of raw returns (RECOMMENDED)
+        tp_pct: TP threshold for triple barrier (default 1.5%)
+        sl_pct: SL threshold for triple barrier (default 0.75%)
 
     Returns:
-        DataFrame with 'price_target_pct' column added
+        DataFrame with 'price_target_pct' and/or 'triple_barrier_label' column added
     """
     result = df.copy()
 
-    # Calculate future price
+    # Triple Barrier (recommended for V10 improved)
+    if use_triple_barrier:
+        result = apply_triple_barrier(result, tp_pct, sl_pct, lookahead_candles)
+
+    # Calculate future price (always computed for reference)
     future_price = calculate_price_target(df, lookahead_candles)
 
     # Calculate percentage change

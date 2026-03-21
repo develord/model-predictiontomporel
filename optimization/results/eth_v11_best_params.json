@@ -1,0 +1,39 @@
+{
+  "crypto": "eth",
+  "best_auc": 0.5753586973099168,
+  "best_accuracy": 0.505,
+  "baseline_accuracy": 0.5383,
+  "improvement": -0.033299999999999996,
+  "n_trials": 101,
+  "best_trial_number": 36,
+  "hyperparameters": {
+    "max_depth": 7,
+    "min_child_weight": 5,
+    "gamma": 3.727532717751376,
+    "learning_rate": 0.052133204355993355,
+    "n_estimators": 494,
+    "subsample": 0.6053163308692234,
+    "colsample_bytree": 0.5619908339372885,
+    "colsample_bylevel": 0.7471582860276644,
+    "reg_alpha": 1.0636750113107754,
+    "reg_lambda": 1.0757109618741838,
+    "scale_pos_weight": 0.40473349764702016
+  },
+  "complete_params": {
+    "max_depth": 7,
+    "min_child_weight": 5,
+    "gamma": 3.727532717751376,
+    "learning_rate": 0.052133204355993355,
+    "n_estimators": 494,
+    "subsample": 0.6053163308692234,
+    "colsample_bytree": 0.5619908339372885,
+    "colsample_bylevel": 0.7471582860276644,
+    "reg_alpha": 1.0636750113107754,
+    "reg_lambda": 1.0757109618741838,
+    "scale_pos_weight": 0.40473349764702016,
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "random_state": 42,
+    "tree_method": "hist"
+  }
+}

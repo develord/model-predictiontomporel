@@ -1,0 +1,39 @@
+{
+  "crypto": "btc",
+  "best_auc": 0.5887602240398293,
+  "best_accuracy": 0.5516666666666666,
+  "baseline_accuracy": 0.5233,
+  "improvement": 0.02836666666666665,
+  "n_trials": 101,
+  "best_trial_number": 75,
+  "hyperparameters": {
+    "max_depth": 7,
+    "min_child_weight": 2,
+    "gamma": 1.5472005590743132,
+    "learning_rate": 0.014189573535928889,
+    "n_estimators": 168,
+    "subsample": 0.8736350388843965,
+    "colsample_bytree": 0.8622719524517248,
+    "colsample_bylevel": 0.930419138292993,
+    "reg_alpha": 0.08847643213072953,
+    "reg_lambda": 0.28030076052927605,
+    "scale_pos_weight": 0.5818023370072232
+  },
+  "complete_params": {
+    "max_depth": 7,
+    "min_child_weight": 2,
+    "gamma": 1.5472005590743132,
+    "learning_rate": 0.014189573535928889,
+    "n_estimators": 168,
+    "subsample": 0.8736350388843965,
+    "colsample_bytree": 0.8622719524517248,
+    "colsample_bylevel": 0.930419138292993,
+    "reg_alpha": 0.08847643213072953,
+    "reg_lambda": 0.28030076052927605,
+    "scale_pos_weight": 0.5818023370072232,
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "random_state": 42,
+    "tree_method": "hist"
+  }
+}

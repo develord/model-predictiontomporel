@@ -27,12 +27,16 @@
     "name": "Bitcoin",
     "description": "Market leader, lower volatility",
 
-    "confidence_threshold": 0.40,
-    "_comment_confidence": "V9 optimal: 40% (was 50%, but BTC max confidence was 42%)",
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 40% to increase trade frequency)",
 
     "tp_multiplier": 0.75,
     "sl_risk_ratio": 0.35,
     "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
 
     "fallback_tp_pct": 5.0,
     "fallback_sl_pct": 3.0,
@@ -57,12 +61,16 @@
     "name": "Ethereum",
     "description": "Altcoin leader, correlated with BTC",
 
-    "confidence_threshold": 0.50,
-    "_comment_confidence": "V9 optimal: 50% → +70.51% ROI! (4 high-quality trades)",
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 50% to increase trade frequency)",
 
     "tp_multiplier": 0.75,
     "sl_risk_ratio": 0.35,
     "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
 
     "fallback_tp_pct": 5.0,
     "fallback_sl_pct": 3.0,
@@ -87,12 +95,16 @@
     "name": "Solana",
     "description": "High volatility altcoin, strong BTC correlation",
 
-    "confidence_threshold": 0.55,
-    "_comment_confidence": "V9 optimal: 55% (higher threshold for volatile SOL)",
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 55% to increase trade frequency)",
 
     "tp_multiplier": 0.75,
     "sl_risk_ratio": 0.35,
     "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
 
     "fallback_tp_pct": 7.0,
     "fallback_sl_pct": 3.5,

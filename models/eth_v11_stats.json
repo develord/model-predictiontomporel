@@ -1,0 +1,55 @@
+{
+  "crypto": "eth",
+  "version": "v11_pro",
+  "features": 348,
+  "train_samples": 2400,
+  "test_samples": 600,
+  "class_distribution_train": {
+    "SL": 877,
+    "TP": 1523,
+    "SL_pct": 36.541666666666664,
+    "TP_pct": 63.458333333333336
+  },
+  "test_metrics": {
+    "accuracy": 0.5383333333333333,
+    "auc": 0.5363038045964876,
+    "tp_class": {
+      "precision": 0.6204188481675392,
+      "recall": 0.6422764227642277,
+      "f1": 0.6311584553928096
+    },
+    "sl_class": {
+      "precision": 0.3944954128440367,
+      "recall": 0.3722943722943723,
+      "f1": 0.3830734966592428
+    },
+    "confusion_matrix": {
+      "true_sl": 86,
+      "false_tp": 145,
+      "false_sl": 132,
+      "true_tp": 237
+    },
+    "prob_distribution": {
+      "min": 0.2184247523546219,
+      "max": 0.9505313038825989,
+      "mean": 0.5620869994163513,
+      "std": 0.15696118772029877
+    }
+  },
+  "hyperparameters": {
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "n_estimators": 200,
+    "gamma": 2,
+    "min_child_weight": 1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "scale_pos_weight": 0.5758371634931058,
+    "random_state": 42,
+    "tree_method": "hist"
+  }
+}

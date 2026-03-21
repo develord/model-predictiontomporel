@@ -1,18 +1,3 @@
-# V10 Multi-Timeframe Project - Git Ignore
-
-# Data cache (large JSON files)
-data/cache/*.json
-
-# Model files
-models/*.json
-models/*.pkl
-models/*.joblib
-
-# Results
-results/*.csv
-results/*.json
-results/*.png
-
 # Python
 __pycache__/
 *.py[cod]
@@ -23,14 +8,29 @@ __pycache__/
 dist/
 build/
 
+# Jupyter
+.ipynb_checkpoints
+
+# Data & Models (too large)
+data/cache/*.csv
+models/*.joblib
+
+# Optuna databases
+optimization/*.db
+
+# Backtest results
+backtesting/results/*.json
+
+# Environment
+.env
+venv/
+env/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Logs
-*.log
 
 # OS
 .DS_Store

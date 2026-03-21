@@ -1,0 +1,39 @@
+{
+  "crypto": "sol",
+  "best_auc": 0.5789212614870509,
+  "best_accuracy": 0.6292682926829268,
+  "baseline_accuracy": 0.5659,
+  "improvement": 0.06336829268292687,
+  "n_trials": 101,
+  "best_trial_number": 83,
+  "hyperparameters": {
+    "max_depth": 7,
+    "min_child_weight": 2,
+    "gamma": 2.882227508718294,
+    "learning_rate": 0.12424117764167995,
+    "n_estimators": 382,
+    "subsample": 0.5657559550197511,
+    "colsample_bytree": 0.6952682628395016,
+    "colsample_bylevel": 0.893445141596305,
+    "reg_alpha": 1.53904975906053,
+    "reg_lambda": 1.4642799359295593,
+    "scale_pos_weight": 1.9828047333546335
+  },
+  "complete_params": {
+    "max_depth": 7,
+    "min_child_weight": 2,
+    "gamma": 2.882227508718294,
+    "learning_rate": 0.12424117764167995,
+    "n_estimators": 382,
+    "subsample": 0.5657559550197511,
+    "colsample_bytree": 0.6952682628395016,
+    "colsample_bylevel": 0.893445141596305,
+    "reg_alpha": 1.53904975906053,
+    "reg_lambda": 1.4642799359295593,
+    "scale_pos_weight": 1.9828047333546335,
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "random_state": 42,
+    "tree_method": "hist"
+  }
+}

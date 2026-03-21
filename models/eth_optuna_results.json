@@ -1,0 +1,41 @@
+{
+  "crypto": "eth",
+  "features": 348,
+  "train_samples": 2400,
+  "val_samples": 600,
+  "n_trials": 100,
+  "regression": {
+    "best_mae": 7.061998337662579,
+    "final_mae": 7.061998337662579,
+    "final_r2": 0.05157277773243829,
+    "pred_min": -6.3268609046936035,
+    "pred_max": 4.1257781982421875,
+    "pred_mean": -0.3686387240886688,
+    "best_params": {
+      "max_depth": 6,
+      "learning_rate": 0.010944048137520989,
+      "n_estimators": 107,
+      "subsample": 0.8652525525996763,
+      "colsample_bytree": 0.6865360623996936,
+      "gamma": 3.2108526793294483,
+      "min_child_weight": 4,
+      "reg_alpha": 0.8384196689157751,
+      "reg_lambda": 1.8662025895551189
+    }
+  },
+  "classification": {
+    "best_accuracy": 0.4583333333333333,
+    "final_accuracy": 0.4583333333333333,
+    "best_params": {
+      "max_depth": 5,
+      "learning_rate": 0.07320415490015778,
+      "n_estimators": 297,
+      "subsample": 0.8399408243055396,
+      "colsample_bytree": 0.6093011608099497,
+      "gamma": 9.783415845278263,
+      "min_child_weight": 5,
+      "reg_alpha": 1.947265861030769,
+      "reg_lambda": 1.6030825108466693
+    }
+  }
+}
