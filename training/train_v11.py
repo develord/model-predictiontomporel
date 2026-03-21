@@ -110,7 +110,8 @@ def train_binary_classifier(crypto: str, params: dict = None):
         feature_cols: List of feature names
     """
     print(f"\n{'='*80}")
-    print(f"V11 PRO - Training Binary Classifier: {crypto.upper()}")
+    print(f"V11 TEMPORAL - Training Binary Classifier: {crypto.upper()}")
+    print(f"WALK-FORWARD VALIDATION: Train <2025, Test >=2025")
     print('='*80)
 
     # Load data
@@ -121,10 +122,21 @@ def train_binary_classifier(crypto: str, params: dict = None):
     print(f"\n[2/4] Preparing Binary Target")
     X, y, feature_cols = prepare_binary_target(df)
 
-    # Train/test split (80/20 time-series)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
+    # TEMPORAL SPLIT: Train until 2024, Test on 2025+
+    # Get timestamps from original df
+    df_clean = df[df['triple_barrier_label'].notna()].copy()
+    timestamps = df_clean.index
+
+    # Split by date
+    train_mask = timestamps < '2025-01-01'
+    test_mask = timestamps >= '2025-01-01'
+
+    X_train, X_test = X[train_mask], X[test_mask]
+    y_train, y_test = y[train_mask], y[test_mask]
+
+    print(f"\n  TEMPORAL VALIDATION:")
+    print(f"    Train period: {timestamps[train_mask][0]} to {timestamps[train_mask][-1]}")
+    print(f"    Test period:  {timestamps[test_mask][0]} to {timestamps[test_mask][-1]}")
 
     print(f"\n[3/4] Training Binary Classifier")
     print(f"  Train samples: {len(X_train)}")

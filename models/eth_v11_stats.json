@@ -2,38 +2,38 @@
   "crypto": "eth",
   "version": "v11_pro",
   "features": 348,
-  "train_samples": 2400,
-  "test_samples": 600,
+  "train_samples": 2556,
+  "test_samples": 444,
   "class_distribution_train": {
-    "SL": 877,
-    "TP": 1523,
-    "SL_pct": 36.541666666666664,
-    "TP_pct": 63.458333333333336
+    "SL": 934,
+    "TP": 1622,
+    "SL_pct": 36.5414710485133,
+    "TP_pct": 63.458528951486706
   },
   "test_metrics": {
-    "accuracy": 0.5383333333333333,
-    "auc": 0.5363038045964876,
+    "accuracy": 0.5315315315315315,
+    "auc": 0.5307151979565773,
     "tp_class": {
-      "precision": 0.6204188481675392,
-      "recall": 0.6422764227642277,
-      "f1": 0.6311584553928096
+      "precision": 0.6131386861313869,
+      "recall": 0.6222222222222222,
+      "f1": 0.6176470588235294
     },
     "sl_class": {
-      "precision": 0.3944954128440367,
-      "recall": 0.3722943722943723,
-      "f1": 0.3830734966592428
+      "precision": 0.4,
+      "recall": 0.39080459770114945,
+      "f1": 0.3953488372093023
     },
     "confusion_matrix": {
-      "true_sl": 86,
-      "false_tp": 145,
-      "false_sl": 132,
-      "true_tp": 237
+      "true_sl": 68,
+      "false_tp": 106,
+      "false_sl": 102,
+      "true_tp": 168
     },
     "prob_distribution": {
-      "min": 0.2184247523546219,
-      "max": 0.9505313038825989,
-      "mean": 0.5620869994163513,
-      "std": 0.15696118772029877
+      "min": 0.23523922264575958,
+      "max": 0.9435416460037231,
+      "mean": 0.5666618943214417,
+      "std": 0.16271422803401947
     }
   },
   "hyperparameters": {
@@ -48,7 +48,7 @@
     "colsample_bytree": 0.8,
     "reg_alpha": 0.1,
     "reg_lambda": 1.0,
-    "scale_pos_weight": 0.5758371634931058,
+    "scale_pos_weight": 0.5758323057953144,
     "random_state": 42,
     "tree_method": "hist"
   }
