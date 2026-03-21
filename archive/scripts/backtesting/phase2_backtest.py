@@ -43,14 +43,13 @@ def load_optimal_thresholds():
 
 
 def simulate_trading(crypto: str, use_phase1: bool, initial_capital=1000.0,
-                     tp_pct=1.5, sl_pct=0.75, use_optuna=False):
+                     tp_pct=1.5, sl_pct=0.75):
     """
-    Simulate trading with BASELINE, PHASE 1, or OPTUNA configuration
+    Simulate trading with BASELINE or PHASE 1 configuration
 
     Args:
         crypto: 'btc', 'eth', or 'sol'
         use_phase1: True = Phase 1 optimized, False = Baseline
-        use_optuna: True = Use Optuna model (overrides use_phase1)
         initial_capital: Starting capital ($)
         tp_pct: Take profit (%)
         sl_pct: Stop loss (%)
@@ -59,17 +58,11 @@ def simulate_trading(crypto: str, use_phase1: bool, initial_capital=1000.0,
         Results dictionary and trades dataframe
     """
 
-    # Load model
-    if use_optuna:
-        # Use Optuna optimized model
-        model_file = Path(__file__).parent.parent / 'models' / f'{crypto}_v11_optimized.joblib'
-        model_name = 'optuna'
-    elif use_phase1 and crypto in ['btc', 'sol']:
-        # Use feature-selected model for Phase 1
+    # Load model (feature-selected if available and use_phase1=True)
+    if use_phase1 and crypto in ['btc', 'sol']:
         model_file = Path(__file__).parent.parent / 'models' / f'{crypto}_v11_feature_selected_top50.joblib'
         model_name = 'feature_selected'
     else:
-        # Use baseline model
         model_file = Path(__file__).parent.parent / 'models' / f'{crypto}_v11_classifier.joblib'
         model_name = 'baseline'
 
@@ -84,10 +77,7 @@ def simulate_trading(crypto: str, use_phase1: bool, initial_capital=1000.0,
     optimal_thresholds = load_optimal_thresholds()
 
     # Choose threshold
-    if use_optuna:
-        prob_threshold = optimal_thresholds.get(crypto, 0.5)  # Use same threshold as Phase 1
-        config_name = f'Optuna (T={prob_threshold:.2f}, optimized_hyperparams)'
-    elif use_phase1:
+    if use_phase1:
         prob_threshold = optimal_thresholds.get(crypto, 0.5)
         config_name = f'Phase1 (T={prob_threshold:.2f}, {model_name})'
     else:
