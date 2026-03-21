@@ -26,9 +26,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def load_data(crypto: str):
-    """Load and prepare data for optimization"""
+    """Load and prepare data for optimization with TEMPORAL split"""
     cache_file = Path(__file__).parent.parent / 'data' / 'cache' / f'{crypto}_multi_tf_merged.csv'
-    df = pd.read_csv(cache_file, index_col=0)
+    df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
 
     # Prepare features
     exclude_cols = [
@@ -48,10 +48,13 @@ def load_data(crypto: str):
     # Binary target: -1 (SL) -> 0, +1 (TP) -> 1
     y = (df_clean['triple_barrier_label'] == 1).astype(int).values
 
-    # Train/test split (80/20)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
+    # TEMPORAL SPLIT: Train <2025, Test >=2025 (same as train_v11.py)
+    timestamps = df_clean.index
+    train_mask = timestamps < '2025-01-01'
+    test_mask = timestamps >= '2025-01-01'
+
+    X_train, X_test = X[train_mask], X[test_mask]
+    y_train, y_test = y[train_mask], y[test_mask]
 
     return X_train, X_test, y_train, y_test, feature_cols
 
@@ -139,7 +142,8 @@ def optimize_crypto(crypto: str, n_trials: int = 100, load_study: bool = False):
     """
 
     print(f"\n{'='*80}")
-    print(f"OPTIMIZING V11 FOR {crypto.upper()}")
+    print(f"OPTIMIZING V11 TEMPORAL FOR {crypto.upper()}")
+    print(f"WALK-FORWARD VALIDATION: Train <2025, Test >=2025")
     print('='*80)
 
     # Load data
@@ -188,12 +192,12 @@ def optimize_crypto(crypto: str, n_trials: int = 100, load_study: bool = False):
     for key, value in study.best_params.items():
         print(f"    {key:20s}: {value}")
 
-    # Compare to baseline V11
-    print(f"\n  Comparison to Baseline V11:")
+    # Compare to baseline V11 TEMPORAL
+    print(f"\n  Comparison to V11 TEMPORAL Baseline:")
     baseline_acc = {
-        'btc': 0.5233,
-        'eth': 0.5383,
-        'sol': 0.5659
+        'btc': 0.5405,
+        'eth': 0.5315,
+        'sol': 0.5563
     }
 
     baseline = baseline_acc.get(crypto, 0.52)
@@ -333,13 +337,13 @@ def optimize_all(n_trials: int = 100):
 
     # Summary
     print(f"\n\n{'='*80}")
-    print("OPTIMIZATION SUMMARY")
+    print("OPTIMIZATION SUMMARY - V11 TEMPORAL")
     print('='*80)
 
     baseline_acc = {
-        'btc': 0.5233,
-        'eth': 0.5383,
-        'sol': 0.5659
+        'btc': 0.5405,
+        'eth': 0.5315,
+        'sol': 0.5563
     }
 
     for crypto in cryptos:
