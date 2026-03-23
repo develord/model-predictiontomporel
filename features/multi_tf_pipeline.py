@@ -169,6 +169,10 @@ def build_multi_tf_dataset(
         df = get_dataframe(crypto, tf)
         if df is None:
             raise ValueError(f"Failed to load {crypto} {tf} data")
+
+        # NO FILTER - Include all data including 2026
+        # df = df[df.index < '2026-01-01']  # REMOVED to include 2026
+
         dfs_raw[tf] = df
         print(f"  + {tf}: {len(df)} rows")
 
@@ -259,6 +263,10 @@ def build_all_cryptos() -> Dict[str, Tuple[pd.DataFrame, Dict]]:
         df = get_dataframe('btc', tf)
         if df is None:
             raise ValueError(f"Failed to load BTC {tf} data")
+
+        # NO FILTER - Include all data including 2026
+        # df = df[df.index < '2026-01-01']  # REMOVED to include 2026
+
         btc_data[tf] = df
         print(f"  + BTC {tf}: {len(df)} rows")
 

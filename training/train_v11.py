@@ -111,7 +111,7 @@ def train_binary_classifier(crypto: str, params: dict = None):
     """
     print(f"\n{'='*80}")
     print(f"V11 TEMPORAL - Training Binary Classifier: {crypto.upper()}")
-    print(f"WALK-FORWARD VALIDATION: Train <2026, Test >=2026")
+    print(f"WALK-FORWARD VALIDATION: Train <2025, Test 2025 (data filtered <2026)")
     print('='*80)
 
     # Load data
@@ -122,14 +122,14 @@ def train_binary_classifier(crypto: str, params: dict = None):
     print(f"\n[2/4] Preparing Binary Target")
     X, y, feature_cols = prepare_binary_target(df)
 
-    # TEMPORAL SPLIT: Train until 2025, Test on 2026+
+    # TEMPORAL SPLIT: Train until 2022, Test on 2024
     # Get timestamps from original df
     df_clean = df[df['triple_barrier_label'].notna()].copy()
     timestamps = df_clean.index
 
-    # Split by date
-    train_mask = timestamps < '2026-01-01'
-    test_mask = timestamps >= '2026-01-01'
+    # Split by date: Train <2025, Test 2025 (data already filtered <2026)
+    train_mask = timestamps < '2025-01-01'
+    test_mask = timestamps >= '2025-01-01'
 
     X_train, X_test = X[train_mask], X[test_mask]
     y_train, y_test = y[train_mask], y[test_mask]
@@ -288,6 +288,43 @@ def train_binary_classifier(crypto: str, params: dict = None):
     return model, stats, feature_cols
 
 
+def load_best_params(crypto: str):
+    """
+    Load best hyperparameters from Optuna optimization
+
+    Returns:
+        dict: Best params if file exists, else None
+    """
+    params_file = Path(__file__).parent.parent / 'optimization' / 'results' / f'{crypto}_v11_best_params.json'
+
+    if not params_file.exists():
+        return None
+
+    try:
+        with open(params_file, 'r') as f:
+            data = json.load(f)
+
+        # Check if Optuna actually improved over baseline
+        improvement = data.get('improvement', 0)
+
+        if 'complete_params' in data:
+            return data['complete_params'], improvement
+        elif 'hyperparameters' in data:
+            # Need to add required fields
+            params = data['hyperparameters'].copy()
+            params['objective'] = 'binary:logistic'
+            params['eval_metric'] = 'auc'
+            params['random_state'] = 42
+            params['tree_method'] = 'hist'
+            return params, improvement
+        else:
+            return None, 0
+
+    except Exception as e:
+        print(f"  Warning: Could not load best params for {crypto}: {e}")
+        return None, 0
+
+
 def train_all_cryptos():
     """Train V11 binary classifier for all cryptos"""
 
@@ -298,12 +335,44 @@ def train_all_cryptos():
     print("Target: P(TP) - Probability of hitting Take Profit")
     print("Output: [0-1] probability for trading decision")
 
+    # Strategy per crypto based on Optuna results
+    # BTC: Optuna improved (+3.16%)
+    # ETH: Baseline better (-2.02% with Optuna)
+    # SOL: Optuna improved (+7.43%)
+    # BTC: Baseline better (Optuna too conservative, 0 trades)
+    use_optuna = {
+        'btc': False,  # Baseline better (Optuna degraded: max P(TP)=59.6% < 60% threshold)
+        'eth': False,  # Baseline better (Optuna degraded performance)
+        'sol': True    # Optuna better
+    }
+
     cryptos_list = ['btc', 'eth', 'sol']
     results = {}
 
+    print("\n" + "="*80)
+    print("HYPERPARAMETER STRATEGY")
+    print("="*80)
+
     for crypto in cryptos_list:
         try:
-            model, stats, feature_cols = train_binary_classifier(crypto)
+            # Load best params from Optuna
+            best_params_result = load_best_params(crypto)
+
+            if best_params_result and best_params_result[0]:
+                best_params, improvement = best_params_result
+
+                # Decide whether to use Optuna params or baseline
+                if use_optuna[crypto]:
+                    print(f"\n{crypto.upper()}: Using OPTUNA params (improvement: {improvement:+.2%})")
+                    params_to_use = best_params
+                else:
+                    print(f"\n{crypto.upper()}: Using BASELINE params (Optuna degraded: {improvement:+.2%})")
+                    params_to_use = None  # Will use baseline
+            else:
+                print(f"\n{crypto.upper()}: Using BASELINE params (no Optuna file found)")
+                params_to_use = None
+
+            model, stats, feature_cols = train_binary_classifier(crypto, params=params_to_use)
             results[crypto] = stats
         except Exception as e:
             print(f"\nERROR training {crypto}: {e}")

@@ -1,7 +1,7 @@
 """
-V11 Backtest - Test period: Jan-Feb-Mar 2025 (3 MONTHS STRICT)
-Detailed trade-by-trade results for BTC, ETH, SOL
-Models trained on <2025, tested on Q1 2025 unseen data
+V11 Backtest - REALTIME Simulation on 2026 data
+Simulates real-time trading on Jan-Feb-Mar 2026
+Models trained on <2025, tested on live 2026 data
 """
 
 import sys
@@ -14,9 +14,12 @@ import joblib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Import feature pipeline
+from features.multi_tf_pipeline import build_multi_tf_dataset
 
-class V11BacktestEngine:
-    """Backtest V11 models on 2025 period (data filtered <2026)"""
+
+class V11RealtimeBacktest:
+    """Realtime backtest on 2026 data"""
 
     def __init__(self, crypto: str, initial_capital: float = 10000.0):
         self.crypto = crypto.lower()
@@ -27,31 +30,35 @@ class V11BacktestEngine:
         model_path = Path(__file__).parent.parent / 'models' / f'{self.crypto}_v11_classifier.joblib'
         self.model = joblib.load(model_path)
 
-        # Trading params (from V11 config)
-        self.tp_threshold = 0.60  # 60% confidence required
-        self.fixed_tp_pct = 1.5   # +1.5% take profit
-        self.fixed_sl_pct = 0.75  # -0.75% stop loss
-        self.position_size_pct = 10.0  # 10% of capital per trade
-        self.fee_pct = 0.1  # 0.1% fee per trade
+        # Trading params
+        self.tp_threshold = 0.60
+        self.fixed_tp_pct = 1.5
+        self.fixed_sl_pct = 0.75
+        self.position_size_pct = 10.0
+        self.fee_pct = 0.1
 
         # Results
         self.trades = []
         self.equity_curve = []
 
-    def load_test_data(self):
-        """Load test data for Jan-Feb-Mar 2025 ONLY (3 months strict)"""
-        cache_file = Path(__file__).parent.parent / 'data' / 'cache' / f'{self.crypto}_multi_tf_merged.csv'
+    def load_and_prepare_data(self):
+        """Load raw data and generate features in realtime"""
+        print(f"\n{'='*80}")
+        print(f"REALTIME BACKTEST - {self.crypto.upper()}")
+        print(f"{'='*80}")
+        print("Loading raw data and generating features...")
 
-        df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+        # Build features using pipeline (includes ALL data, not filtered)
+        df = build_multi_tf_dataset(self.crypto)
 
-        # Filter for test period (Jan-Feb-Mar 2025 - 3 months STRICT)
-        test_df = df[(df.index >= '2025-01-01') & (df.index <= '2025-03-31')].copy()
+        # Filter for 2026 ONLY (realtime simulation)
+        df_2026 = df[df.index >= '2026-01-01'].copy()
 
-        print(f"\n{self.crypto.upper()} Test Data:")
-        print(f"  Period: {test_df.index[0]} to {test_df.index[-1]}")
-        print(f"  Candles: {len(test_df)}")
+        print(f"\n2026 Realtime Data:")
+        print(f"  Period: {df_2026.index[0]} to {df_2026.index[-1]}")
+        print(f"  Candles: {len(df_2026)}")
 
-        return test_df
+        return df_2026
 
     def prepare_features(self, df):
         """Extract features for prediction"""
@@ -79,7 +86,7 @@ class V11BacktestEngine:
             # Check TP first (priority)
             if high >= tp_price:
                 pnl_pct = ((tp_price - entry_price) / entry_price) * 100
-                pnl_pct -= self.fee_pct * 2  # Entry + exit fees
+                pnl_pct -= self.fee_pct * 2
                 pnl = position_value * (pnl_pct / 100)
 
                 return {
@@ -99,7 +106,7 @@ class V11BacktestEngine:
             # Check SL
             if low <= sl_price:
                 pnl_pct = ((sl_price - entry_price) / entry_price) * 100
-                pnl_pct -= self.fee_pct * 2  # Entry + exit fees
+                pnl_pct -= self.fee_pct * 2
                 pnl = position_value * (pnl_pct / 100)
 
                 return {
@@ -116,24 +123,21 @@ class V11BacktestEngine:
                     'hold_periods': i + 1
                 }
 
-        return None  # Timeout (no TP/SL hit)
+        return None
 
     def run_backtest(self):
-        """Run backtest on 2026+ data"""
+        """Run realtime backtest on 2026 data"""
 
-        print(f"\n{'='*80}")
-        print(f"V11 BACKTEST - {self.crypto.upper()}")
-        print(f"{'='*80}")
         print(f"Threshold: P(TP) > {self.tp_threshold}")
         print(f"TP: +{self.fixed_tp_pct}%, SL: -{self.fixed_sl_pct}%")
         print(f"Position size: {self.position_size_pct}% of capital")
         print(f"Initial capital: ${self.initial_capital:,.2f}")
 
-        # Load data
-        test_df = self.load_test_data()
+        # Load and prepare realtime data
+        test_df = self.load_and_prepare_data()
         feature_cols = self.prepare_features(test_df)
 
-        # Iterate through test period
+        # Iterate through 2026 period
         for i in range(len(test_df) - 1):
             idx = test_df.index[i]
             row = test_df.loc[idx]
@@ -147,7 +151,7 @@ class V11BacktestEngine:
 
             # Trading decision
             if prob_tp < self.tp_threshold:
-                continue  # Skip - not confident enough
+                continue
 
             # Open trade
             entry_price = row['close']
@@ -237,12 +241,13 @@ class V11BacktestEngine:
 
 
 def backtest_all_cryptos():
-    """Run backtest for all cryptos"""
+    """Run realtime backtest for all cryptos"""
 
     print("\n" + "="*80)
-    print("V11 BACKTEST - Q1 2025 (JAN-FEB-MAR) - 3 MONTHS STRICT")
+    print("V11 REALTIME BACKTEST - 2026 SIMULATION")
     print("="*80)
-    print(f"Test period: 2025-01-01 to 2025-03-31 (90 days)")
+    print(f"Simulating real-time trading on 2026 data (Jan-Mar)")
+    print(f"Models trained on <2025, tested on unseen 2026 data")
     print("="*80)
 
     cryptos = ['btc', 'eth', 'sol']
@@ -251,7 +256,7 @@ def backtest_all_cryptos():
 
     for crypto in cryptos:
         try:
-            engine = V11BacktestEngine(crypto, initial_capital=10000.0)
+            engine = V11RealtimeBacktest(crypto, initial_capital=10000.0)
             result = engine.run_backtest()
 
             # Handle different return types
@@ -271,7 +276,7 @@ def backtest_all_cryptos():
 
     # Print summary
     print("\n\n" + "="*80)
-    print("BACKTEST SUMMARY - ALL CRYPTOS")
+    print("REALTIME BACKTEST SUMMARY - 2026")
     print("="*80)
 
     for crypto in cryptos:
@@ -296,51 +301,19 @@ def backtest_all_cryptos():
         print(f"  Profit Factor: {metrics['profit_factor']:.2f}")
         print(f"  Max Drawdown: {metrics['max_drawdown']:.2f}%")
 
-    # Print detailed trades
-    print("\n\n" + "="*80)
-    print("DETAILED TRADE LIST")
-    print("="*80)
-
-    for crypto in cryptos:
-        if crypto not in all_trades or all_trades[crypto] is None:
-            continue
-
-        trades_df = all_trades[crypto]
-
-        if len(trades_df) == 0:
-            print(f"\n{crypto.upper()}: No trades")
-            continue
-
-        print(f"\n{crypto.upper()} - {len(trades_df)} trades:")
-        print("-" * 80)
-
-        for idx, trade in trades_df.iterrows():
-            result_text = "[WIN] " if trade['result'] == 'WIN' else "[LOSE]"
-
-            print(f"{idx+1:2d}. {result_text} | "
-                  f"Entry: {trade['entry_time'].strftime('%Y-%m-%d %H:%M')} | "
-                  f"Exit: {trade['exit_time'].strftime('%Y-%m-%d %H:%M')} | "
-                  f"P&L: ${trade['pnl']:+7.2f} ({trade['pnl_pct']:+.2f}%) | "
-                  f"Capital: ${trade['capital_after']:,.2f} | "
-                  f"Confidence: {trade['prob_tp']:.1%}")
-
-        print(f"\nTotal: {trades_df['pnl'].sum():+.2f} USD")
-
     # Save results
     results_dir = Path(__file__).parent.parent / 'results'
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save metrics
-    with open(results_dir / 'backtest_2026_metrics.json', 'w') as f:
+    with open(results_dir / 'backtest_2026_realtime.json', 'w') as f:
         json.dump(all_results, f, indent=2)
 
-    # Save trades
     for crypto, trades_df in all_trades.items():
         if trades_df is not None and len(trades_df) > 0:
-            trades_df.to_csv(results_dir / f'backtest_2026_{crypto}_trades.csv')
+            trades_df.to_csv(results_dir / f'backtest_2026_realtime_{crypto}_trades.csv')
 
     print("\n" + "="*80)
-    print("BACKTEST COMPLETE!")
+    print("REALTIME BACKTEST COMPLETE!")
     print(f"Results saved to: {results_dir}")
     print("="*80)
 

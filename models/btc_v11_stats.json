@@ -2,38 +2,38 @@
   "crypto": "btc",
   "version": "v11_pro",
   "features": 237,
-  "train_samples": 2556,
-  "test_samples": 444,
+  "train_samples": 2553,
+  "test_samples": 447,
   "class_distribution_train": {
     "SL": 1124,
-    "TP": 1432,
-    "SL_pct": 43.97496087636933,
-    "TP_pct": 56.02503912363067
+    "TP": 1429,
+    "SL_pct": 44.026635330983154,
+    "TP_pct": 55.973364669016846
   },
   "test_metrics": {
-    "accuracy": 0.5405405405405406,
-    "auc": 0.554441348168338,
+    "accuracy": 0.5570469798657718,
+    "auc": 0.5823000682155612,
     "tp_class": {
-      "precision": 0.5167464114832536,
-      "recall": 0.5118483412322274,
-      "f1": 0.5142857142857142
+      "precision": 0.5380710659898477,
+      "recall": 0.49765258215962443,
+      "f1": 0.5170731707317073
     },
     "sl_class": {
-      "precision": 0.5617021276595745,
-      "recall": 0.5665236051502146,
-      "f1": 0.5641025641025641
+      "precision": 0.572,
+      "recall": 0.6111111111111112,
+      "f1": 0.5909090909090909
     },
     "confusion_matrix": {
-      "true_sl": 132,
-      "false_tp": 101,
-      "false_sl": 103,
-      "true_tp": 108
+      "true_sl": 143,
+      "false_tp": 91,
+      "false_sl": 107,
+      "true_tp": 106
     },
     "prob_distribution": {
-      "min": 0.14197923243045807,
-      "max": 0.9389010071754456,
-      "mean": 0.4999743700027466,
-      "std": 0.1478223204612732
+      "min": 0.15027859807014465,
+      "max": 0.9126171469688416,
+      "mean": 0.48448583483695984,
+      "std": 0.16108351945877075
     }
   },
   "hyperparameters": {
@@ -48,7 +48,7 @@
     "colsample_bytree": 0.8,
     "reg_alpha": 0.1,
     "reg_lambda": 1.0,
-    "scale_pos_weight": 0.7849162011173184,
+    "scale_pos_weight": 0.7865640307907628,
     "random_state": 42,
     "tree_method": "hist"
   }
