@@ -1,0 +1,5 @@
+{
+  "lstm_train_end": "2024-01-01",
+  "seq_len": 20,
+  "input_features": 4
+}

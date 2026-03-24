@@ -1,0 +1,47 @@
+{
+  "btc": {
+    "crypto": "BTC",
+    "total_trades": 64,
+    "wins": 32,
+    "losses": 32,
+    "win_rate": 50.0,
+    "total_roi": 2.4586892835102736,
+    "total_pnl": 245.86892835102708,
+    "profit_factor": 1.8489524104660133,
+    "max_drawdown": -0.3507052784648452,
+    "avg_tp_pct": 1.8498714599665564,
+    "avg_sl_pct": 0.6937017974874586,
+    "avg_hold": 1.03125,
+    "avg_confidence": 0.5639984011650085
+  },
+  "eth": {
+    "crypto": "ETH",
+    "total_trades": 78,
+    "wins": 37,
+    "losses": 41,
+    "win_rate": 47.43589743589743,
+    "total_roi": 3.561551474452229,
+    "total_pnl": 356.15514744522244,
+    "profit_factor": 1.6430569309293992,
+    "max_drawdown": -1.4856874167437375,
+    "avg_tp_pct": 2.7119659379027676,
+    "avg_sl_pct": 1.070770042812396,
+    "avg_hold": 1.0256410256410255,
+    "avg_confidence": 0.6640879511833191
+  },
+  "sol": {
+    "crypto": "SOL",
+    "total_trades": 76,
+    "wins": 36,
+    "losses": 40,
+    "win_rate": 47.368421052631575,
+    "total_roi": 6.415524159022845,
+    "total_pnl": 641.5524159022846,
+    "profit_factor": 2.105692155753271,
+    "max_drawdown": -0.8362012431381658,
+    "avg_tp_pct": 3.480047007244201,
+    "avg_sl_pct": 1.3123546336656071,
+    "avg_hold": 1.0394736842105263,
+    "avg_confidence": 0.5753400921821594
+  }
+}

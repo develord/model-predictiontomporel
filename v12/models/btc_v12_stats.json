@@ -1,0 +1,21 @@
+{
+  "crypto": "btc",
+  "version": "v12_atr_lstm",
+  "use_lstm": true,
+  "features": 242,
+  "lstm_features": [
+    "lstm_proba",
+    "lstm_confidence",
+    "lstm_signal",
+    "lstm_agrees_rsi"
+  ],
+  "train_samples": 2553,
+  "test_samples": 447,
+  "test_metrics": {
+    "accuracy": 0.5525727069351231,
+    "auc": 0.5592672846193973,
+    "tp_precision": 0.5371428571428571,
+    "tp_recall": 0.4413145539906103,
+    "tp_f1": 0.4845360824742268
+  }
+}

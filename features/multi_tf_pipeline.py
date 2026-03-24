@@ -52,7 +52,7 @@ def align_4h_to_1d(df_4h: pd.DataFrame) -> pd.DataFrame:
     df_1d_aligned = df_4h.resample('1D').last()
 
     # Forward fill any missing days (weekends, holidays)
-    df_1d_aligned = df_1d_aligned.fillna(method='ffill')
+    df_1d_aligned = df_1d_aligned.ffill()
 
     return df_1d_aligned
 
@@ -132,7 +132,7 @@ def merge_multi_tf_features(
     # Step 5: Handle any remaining NaN (forward fill then back fill)
     nan_before = result.isnull().sum().sum()
     if nan_before > 0:
-        result = result.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        result = result.ffill().bfill().fillna(0)
         print(f"    Filled {nan_before} NaN values")
 
     total_features = len(feature_cols_4h) + len([c for c in df_1d.columns if c not in exclude_cols]) + len(feature_cols_1w)

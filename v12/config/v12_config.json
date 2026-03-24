@@ -1,0 +1,51 @@
+{
+  "_description": "V12 Configuration - Dynamic ATR TP/SL (VALIDATED via Walk-Forward)",
+  "_version": "12.1.0",
+  "_last_updated": "2026-03-24",
+  "_validation": "Walk-forward validated on 2 periods, consistency <11%, all profitable",
+
+  "dynamic_tp_sl": {
+    "atr_period": 14,
+    "_atr_period_note": "ATR(14) best across all cryptos (vs 7 and 21)",
+
+    "min_tp_pct": 0.75,
+    "max_tp_pct": 3.5,
+    "min_sl_pct": 0.35,
+    "max_sl_pct": 1.75,
+    "risk_reward_min": 1.8
+  },
+
+  "BTC": {
+    "symbol": "BTCUSDT",
+    "tp_atr_multiplier": 0.40,
+    "sl_atr_multiplier": 0.15,
+    "confidence_threshold": 0.35,
+    "_validation": "P1:+10.49% P2:+8.90% | Consistency:8.2% EXCELLENT",
+    "_avg_tp_sl": "TP~1.4-1.7% SL~0.5-0.65% R:R~2.7:1"
+  },
+
+  "ETH": {
+    "symbol": "ETHUSDT",
+    "tp_atr_multiplier": 0.40,
+    "sl_atr_multiplier": 0.15,
+    "confidence_threshold": 0.35,
+    "_validation": "P1:+16.46% P2:+20.15% | Consistency:10.1% EXCELLENT | Top5 BOTH periods",
+    "_avg_tp_sl": "TP~2.0-2.6% SL~0.75-0.9% R:R~2.7:1"
+  },
+
+  "SOL": {
+    "symbol": "SOLUSDT",
+    "tp_atr_multiplier": 0.60,
+    "sl_atr_multiplier": 0.15,
+    "confidence_threshold": 0.35,
+    "_validation": "P1:+28.96% P2:+29.77% | Consistency:1.4% EXCELLENT | Top5 BOTH periods",
+    "_avg_tp_sl": "TP~3.3-3.5% SL~1.0-1.1% R:R~3.2:1"
+  },
+
+  "trading": {
+    "position_size_pct": 10.0,
+    "fee_pct": 0.1,
+    "lookahead_candles_1d": 7,
+    "lookahead_candles_4h": 42
+  }
+}
