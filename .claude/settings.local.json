@@ -3,7 +3,10 @@
     "allow": [
       "Bash(python:*)",
       "Bash(timeout 30 tail:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(git commit:*)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq *python*\" 2)",
+      "Bash(NUL)"
     ],
     "deny": [],
     "ask": []
