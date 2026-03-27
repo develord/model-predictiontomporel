@@ -1,9 +1,10 @@
 """
-V10 Base Indicators - Multi-Timeframe
-======================================
-Port of V9 base indicators with multi-timeframe support
+V10 Base Indicators - Multi-Timeframe (Enhanced)
+================================================
+Port of V9 base indicators with multi-timeframe support + Priority 1 Features
 
-Calculates 30 base technical indicators per timeframe:
+Calculates 43 base technical indicators per timeframe:
+=== ORIGINAL (30) ===
 - RSI (14, 21, overbought, oversold)
 - MACD (line, signal, histogram, crossover)
 - Bollinger Bands (upper, middle, lower, width, percent)
@@ -14,6 +15,17 @@ Calculates 30 base technical indicators per timeframe:
 - ADX (14)
 - OBV
 - CMF (20)
+
+=== NEW PRIORITY 1 FEATURES (13) ===
+- VWAP (20) - Volume Weighted Average Price
+- MFI (14) - Money Flow Index (volume-weighted RSI)
+- Williams %R (14) - Momentum oscillator
+- CCI (20) - Commodity Channel Index
+- Keltner Channels (upper, middle, lower, width) - ATR-based volatility bands
+- Historical Volatility (20, 50) - Annualized volatility
+- Session Features (hour_volatility, is_high_vol_hour) - Time-based patterns
+
+Total: 43 indicators per timeframe × 3 timeframes = 129 base indicators
 """
 
 import numpy as np
@@ -243,18 +255,156 @@ def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     return adx
 
 
+def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 20) -> pd.Series:
+    """
+    Calculate VWAP (Volume Weighted Average Price)
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        volume: Volume series
+        period: Rolling window period (default 20)
+
+    Returns:
+        Series of VWAP values
+    """
+    typical_price = (high + low + close) / 3
+    vwap = (typical_price * volume).rolling(window=period).sum() / volume.rolling(window=period).sum()
+    return vwap
+
+
+def calculate_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate MFI (Money Flow Index) - Volume-weighted RSI
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        volume: Volume series
+        period: MFI period (default 14)
+
+    Returns:
+        Series of MFI values (0-100)
+    """
+    typical_price = (high + low + close) / 3
+    money_flow = typical_price * volume
+
+    # Positive and negative money flow
+    positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
+    negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
+
+    # Money flow ratio
+    positive_mf = positive_flow.rolling(window=period).sum()
+    negative_mf = negative_flow.rolling(window=period).sum()
+
+    # Avoid division by zero
+    mfi_ratio = positive_mf / negative_mf.replace(0, 0.0001)
+    mfi = 100 - (100 / (1 + mfi_ratio))
+
+    return mfi
+
+
+def calculate_williams_r(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate Williams %R - Momentum oscillator
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: Lookback period (default 14)
+
+    Returns:
+        Series of Williams %R values (-100 to 0)
+    """
+    highest_high = high.rolling(window=period).max()
+    lowest_low = low.rolling(window=period).min()
+
+    williams_r = -100 * (highest_high - close) / (highest_high - lowest_low)
+
+    return williams_r
+
+
+def calculate_cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20) -> pd.Series:
+    """
+    Calculate CCI (Commodity Channel Index)
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: CCI period (default 20)
+
+    Returns:
+        Series of CCI values
+    """
+    typical_price = (high + low + close) / 3
+    sma_tp = typical_price.rolling(window=period).mean()
+    mean_deviation = typical_price.rolling(window=period).apply(lambda x: np.abs(x - x.mean()).mean())
+
+    cci = (typical_price - sma_tp) / (0.015 * mean_deviation)
+
+    return cci
+
+
+def calculate_keltner_channels(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20, multiplier: float = 2.0) -> Dict[str, pd.Series]:
+    """
+    Calculate Keltner Channels - ATR-based volatility bands
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: Period for EMA and ATR (default 20)
+        multiplier: ATR multiplier (default 2.0)
+
+    Returns:
+        Dict with 'upper', 'middle', 'lower' Series
+    """
+    middle = calculate_ema(close, period)
+    atr = calculate_atr(high, low, close, period)
+
+    upper = middle + (multiplier * atr)
+    lower = middle - (multiplier * atr)
+
+    return {
+        'upper': upper,
+        'middle': middle,
+        'lower': lower
+    }
+
+
+def calculate_historical_volatility(close: pd.Series, period: int = 20) -> pd.Series:
+    """
+    Calculate Historical Volatility (annualized)
+
+    Args:
+        close: Close price series
+        period: Rolling window period (default 20)
+
+    Returns:
+        Series of historical volatility values
+    """
+    log_returns = np.log(close / close.shift(1))
+    volatility = log_returns.rolling(window=period).std() * np.sqrt(252)  # Annualized
+
+    return volatility
+
+
 def calculate_base_indicators(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """
-    Calculate all 30 base indicators for a given timeframe
+    Calculate all 43 base indicators for a given timeframe (30 original + 13 new Priority 1 features)
 
     Args:
         df: DataFrame with columns ['open', 'high', 'low', 'close', 'volume', 'timestamp']
         timeframe: Timeframe identifier ('4h', '1d', '1w')
 
     Returns:
-        DataFrame with original columns + 30 indicator columns (prefixed with timeframe)
+        DataFrame with original columns + 43 indicator columns (prefixed with timeframe)
 
-    Indicator columns added (30 total):
+    Indicator columns added (43 total):
         - {tf}_rsi_14, {tf}_rsi_21, {tf}_rsi_overbought, {tf}_rsi_oversold (4)
         - {tf}_macd_line, {tf}_macd_signal, {tf}_macd_histogram, {tf}_macd_crossover (4)
         - {tf}_bb_upper, {tf}_bb_middle, {tf}_bb_lower, {tf}_bb_width, {tf}_bb_percent (5)
@@ -265,6 +415,14 @@ def calculate_base_indicators(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         - {tf}_adx_14 (1)
         - {tf}_obv (1)
         - {tf}_cmf_20 (1)
+        - {tf}_vwap_20 (1) [NEW]
+        - {tf}_mfi_14 (1) [NEW]
+        - {tf}_williams_r_14 (1) [NEW]
+        - {tf}_cci_20 (1) [NEW]
+        - {tf}_keltner_upper, {tf}_keltner_middle, {tf}_keltner_lower, {tf}_keltner_width (4) [NEW]
+        - {tf}_hist_vol_20, {tf}_hist_vol_50 (2) [NEW]
+        - {tf}_hour_volatility (1) [NEW - Session feature]
+        - {tf}_is_high_vol_hour (1) [NEW - Session feature]
     """
     result = df.copy()
     tf = timeframe
@@ -329,6 +487,59 @@ def calculate_base_indicators(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     # 10. CMF (1 feature)
     result[f'{tf}_cmf_20'] = calculate_cmf(df['high'], df['low'], df['close'], df['volume'])
 
+    # === NEW PRIORITY 1 FEATURES ===
+
+    # 11. VWAP (1 feature)
+    result[f'{tf}_vwap_20'] = calculate_vwap(df['high'], df['low'], df['close'], df['volume'])
+
+    # 12. MFI - Money Flow Index (1 feature)
+    result[f'{tf}_mfi_14'] = calculate_mfi(df['high'], df['low'], df['close'], df['volume'])
+
+    # 13. Williams %R (1 feature)
+    result[f'{tf}_williams_r_14'] = calculate_williams_r(df['high'], df['low'], df['close'])
+
+    # 14. CCI - Commodity Channel Index (1 feature)
+    result[f'{tf}_cci_20'] = calculate_cci(df['high'], df['low'], df['close'])
+
+    # 15. Keltner Channels (4 features)
+    keltner = calculate_keltner_channels(df['high'], df['low'], df['close'])
+    result[f'{tf}_keltner_upper'] = keltner['upper']
+    result[f'{tf}_keltner_middle'] = keltner['middle']
+    result[f'{tf}_keltner_lower'] = keltner['lower']
+    result[f'{tf}_keltner_width'] = (keltner['upper'] - keltner['lower']) / keltner['middle']
+
+    # 16. Historical Volatility (2 features - two periods)
+    result[f'{tf}_hist_vol_20'] = calculate_historical_volatility(df['close'], 20)
+    result[f'{tf}_hist_vol_50'] = calculate_historical_volatility(df['close'], 50)
+
+    # 17. Session features (2 features)
+    # Hour-of-day volatility pattern (only for hourly data with timestamp)
+    if 'timestamp' in df.columns:
+        try:
+            # Calculate hourly volatility if timestamp is available
+            if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+                df_temp = df.copy()
+                df_temp['timestamp'] = pd.to_datetime(df_temp['timestamp'])
+            else:
+                df_temp = df
+
+            df_temp['hour'] = df_temp['timestamp'].dt.hour
+
+            # Calculate average volatility per hour
+            hour_vol = df_temp.groupby('hour')[f'{tf}_hist_vol_20'].transform('mean')
+            result[f'{tf}_hour_volatility'] = hour_vol
+
+            # Mark high volatility hours (top 25%)
+            vol_threshold = hour_vol.quantile(0.75)
+            result[f'{tf}_is_high_vol_hour'] = (hour_vol > vol_threshold).astype(int)
+        except:
+            # If timestamp processing fails, fill with defaults
+            result[f'{tf}_hour_volatility'] = 0
+            result[f'{tf}_is_high_vol_hour'] = 0
+    else:
+        result[f'{tf}_hour_volatility'] = 0
+        result[f'{tf}_is_high_vol_hour'] = 0
+
     return result
 
 
@@ -338,7 +549,7 @@ def calculate_multi_tf_base_indicators(
     df_1w: pd.DataFrame
 ) -> Dict[str, pd.DataFrame]:
     """
-    Calculate base indicators for all 3 timeframes
+    Calculate base indicators for all 3 timeframes (ENHANCED with Priority 1 features)
 
     Args:
         df_4h: 4-hour dataframe
@@ -349,8 +560,17 @@ def calculate_multi_tf_base_indicators(
         Dict with keys '4h', '1d', '1w' containing DataFrames with indicators
 
     Feature count:
-        - Per timeframe: 30 indicators
-        - Total: 90 base indicators (30 × 3 timeframes)
+        - Per timeframe: 43 indicators (30 original + 13 new Priority 1)
+        - Total: 129 base indicators (43 × 3 timeframes)
+
+    New Priority 1 features (13 per timeframe):
+        - VWAP (1)
+        - MFI (1)
+        - Williams %R (1)
+        - CCI (1)
+        - Keltner Channels (4)
+        - Historical Volatility (2)
+        - Session Features (2)
     """
     return {
         '4h': calculate_base_indicators(df_4h, '4h'),
