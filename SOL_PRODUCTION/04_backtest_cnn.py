@@ -151,6 +151,23 @@ def check_filters(row, consecutive_losses, cooldown_until, current_date):
         if row['1d_btc_trend_alignment'] < -1.0:
             return False, "btc_very_bearish"
 
+    # High volatility filter - SL more likely when vol is elevated
+    if '1d_volatility_7' in row.index and pd.notna(row['1d_volatility_7']):
+        if row['1d_volatility_7'] > 2.8:
+            return False, "high_volatility"
+
+    # BTC volatility filter - risky when BTC is volatile
+    if '1d_btc_volatility_7' in row.index and pd.notna(row['1d_btc_volatility_7']):
+        if row['1d_btc_volatility_7'] > 2.0:
+            return False, "btc_high_vol"
+
+    # SOL own momentum must be positive but not extreme (overextended)
+    if '1d_momentum_5' in row.index and pd.notna(row['1d_momentum_5']):
+        if row['1d_momentum_5'] < 1.0:
+            return False, "weak_sol_momentum"
+        if row['1d_momentum_5'] > 5.0:
+            return False, "overextended"
+
     return True, "pass"
 
 
