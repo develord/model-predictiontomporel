@@ -1,258 +1,51 @@
 {
-  "crypto": "eth",
-  "mode": "top50",
-  "version": "v11_phases",
-  "features": 50,
-  "train_samples": 2552,
-  "test_samples": 448,
-  "class_distribution_train": {
-    "SL": 934,
-    "TP": 1618,
-    "SL_pct": 36.5987460815047,
-    "TP_pct": 63.40125391849529
-  },
-  "test_metrics": {
-    "accuracy": 0.5357142857142857,
-    "auc": 0.5239597259358288,
-    "tp_class": {
-      "precision": 0.6126760563380281,
-      "recall": 0.6397058823529411,
-      "f1": 0.6258992805755396
-    },
-    "sl_class": {
-      "precision": 0.4024390243902439,
-      "recall": 0.375,
-      "f1": 0.38823529411764707
-    },
-    "confusion_matrix": {
-      "true_sl": 66,
-      "false_tp": 110,
-      "false_sl": 98,
-      "true_tp": 174
-    },
-    "prob_distribution": {
-      "min": 0.2051151692867279,
-      "max": 0.9515429735183716,
-      "mean": 0.5584633946418762,
-      "std": 0.14800965785980225
-    }
-  },
-  "hyperparameters": {
-    "objective": "binary:logistic",
-    "eval_metric": "auc",
-    "max_depth": 6,
-    "learning_rate": 0.05,
-    "n_estimators": 200,
-    "gamma": 2,
-    "min_child_weight": 1,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "reg_alpha": 0.1,
-    "reg_lambda": 1.0,
-    "scale_pos_weight": 0.5772558714462299,
-    "random_state": 42,
-    "tree_method": "hist"
-  },
+  "crypto": "ETH",
+  "model_type": "XGBoost",
+  "train_end": "2024-12-31",
+  "n_features": 384,
+  "train_samples": 2551,
+  "train_tp_samples": 1617,
+  "train_sl_samples": 934,
   "top_features": [
     {
+      "feature": "1d_ema_cross_12_26",
+      "importance": 0.026215704157948494
+    },
+    {
       "feature": "1d_volatility_7",
-      "importance": 0.0469447560608387
+      "importance": 0.025781219825148582
     },
     {
       "feature": "1d_atr_pct",
-      "importance": 0.026995819061994553
-    },
-    {
-      "feature": "1d_volatility_5",
-      "importance": 0.025352586060762405
+      "importance": 0.013203322887420654
     },
     {
       "feature": "1d_bb_width",
-      "importance": 0.024766311049461365
+      "importance": 0.012607069686055183
     },
     {
-      "feature": "1d_momentum_1",
-      "importance": 0.023617200553417206
-    },
-    {
-      "feature": "1d_volatility_3",
-      "importance": 0.022541800513863564
-    },
-    {
-      "feature": "1d_btc_volatility_7",
-      "importance": 0.02210637740790844
-    },
-    {
-      "feature": "1d_btc_price_vol_divergence",
-      "importance": 0.022104691714048386
-    },
-    {
-      "feature": "1d_price_vs_mean_5",
-      "importance": 0.022013507783412933
-    },
-    {
-      "feature": "1d_position_in_range",
-      "importance": 0.021626757457852364
-    },
-    {
-      "feature": "1d_btc_corr_30",
-      "importance": 0.021277837455272675
-    },
-    {
-      "feature": "1d_price_vs_mean_14",
-      "importance": 0.021186424419283867
-    },
-    {
-      "feature": "1d_btc_momentum_7",
-      "importance": 0.020950045436620712
-    },
-    {
-      "feature": "1d_volatility_14",
-      "importance": 0.02041991613805294
-    },
-    {
-      "feature": "1d_btc_volatility_30",
-      "importance": 0.01992003619670868
-    },
-    {
-      "feature": "1d_trend_14",
-      "importance": 0.01981671154499054
-    },
-    {
-      "feature": "1d_close_lag_1",
-      "importance": 0.01956416852772236
-    },
-    {
-      "feature": "1d_volume_ratio_14",
-      "importance": 0.019351525232195854
-    },
-    {
-      "feature": "1d_volume_lag_4",
-      "importance": 0.0193057581782341
-    },
-    {
-      "feature": "1d_ema_12",
-      "importance": 0.019251108169555664
-    },
-    {
-      "feature": "1d_volume_trend_7",
-      "importance": 0.019154313951730728
-    },
-    {
-      "feature": "1d_btc_volatility_14",
-      "importance": 0.01910453662276268
-    },
-    {
-      "feature": "1d_close_lag_3",
-      "importance": 0.019003059715032578
-    },
-    {
-      "feature": "1d_btc_volatility_ratio_14",
-      "importance": 0.018950611352920532
-    },
-    {
-      "feature": "1d_volume_lag_2",
-      "importance": 0.018783869221806526
-    },
-    {
-      "feature": "1d_close_lag_4",
-      "importance": 0.018749065697193146
-    },
-    {
-      "feature": "1d_volume_ratio_7",
-      "importance": 0.018738513812422752
-    },
-    {
-      "feature": "1d_btc_corr_60",
-      "importance": 0.018707914277911186
+      "feature": "1d_keltner_width",
+      "importance": 0.01251628901809454
     },
     {
       "feature": "1d_asset_trend",
-      "importance": 0.0186766404658556
+      "importance": 0.010945754125714302
     },
     {
-      "feature": "1d_volume_lag_3",
-      "importance": 0.018558410927653313
+      "feature": "1d_lower_lows_ratio",
+      "importance": 0.010506713762879372
     },
     {
-      "feature": "1d_volume_ratio_3",
-      "importance": 0.01846613548696041
+      "feature": "1d_close_lag_1",
+      "importance": 0.010118442587554455
     },
     {
-      "feature": "1d_trend_3",
-      "importance": 0.018464474007487297
+      "feature": "1d_keltner_lower",
+      "importance": 0.01009384635835886
     },
     {
-      "feature": "1d_momentum_5",
-      "importance": 0.01817445084452629
-    },
-    {
-      "feature": "1d_macd_momentum",
-      "importance": 0.0181108508259058
-    },
-    {
-      "feature": "1d_macd_line",
-      "importance": 0.01809685491025448
-    },
-    {
-      "feature": "1d_btc_dominance_7",
-      "importance": 0.01797437109053135
-    },
-    {
-      "feature": "1d_sma_200",
-      "importance": 0.017918763682246208
-    },
-    {
-      "feature": "1d_momentum_7",
-      "importance": 0.017907902598381042
-    },
-    {
-      "feature": "1d_stoch_momentum",
-      "importance": 0.017905518412590027
-    },
-    {
-      "feature": "1d_btc_momentum_ratio_14",
-      "importance": 0.017876997590065002
-    },
-    {
-      "feature": "1d_btc_relative_strength_7",
-      "importance": 0.017765233293175697
-    },
-    {
-      "feature": "1d_macd_histogram",
-      "importance": 0.017745448276400566
-    },
-    {
-      "feature": "1d_price_volume_corr",
-      "importance": 0.017708882689476013
-    },
-    {
-      "feature": "1d_btc_volatility_ratio_7",
-      "importance": 0.017506765201687813
-    },
-    {
-      "feature": "1d_macd_signal",
-      "importance": 0.01725069060921669
-    },
-    {
-      "feature": "1d_accel_5_7",
-      "importance": 0.017218751832842827
-    },
-    {
-      "feature": "1d_trend_5",
-      "importance": 0.01713286153972149
-    },
-    {
-      "feature": "1d_obv",
-      "importance": 0.016554176807403564
-    },
-    {
-      "feature": "1d_sma_50",
-      "importance": 0.016490478068590164
-    },
-    {
-      "feature": "1d_accel_1_3",
-      "importance": 0.016190072521567345
+      "feature": "1d_vwap_20",
+      "importance": 0.009913654066622257
     }
   ]
 }

@@ -49,11 +49,16 @@ def train_model():
     logger.info(f"\nTrain: {len(df_train)} candles (until {TRAIN_END})")
     logger.info(f"Test: {len(df_test)} candles (Q1 2026)")
 
-    # Prepare features
-    feature_cols = [col for col in df_train.columns if col not in ['date', 'timestamp', 'label_class', 'triple_barrier_label']]
+    # Prepare features - exclude target leaks and meta columns
+    exclude_cols = ['date', 'timestamp', 'label_class', 'triple_barrier_label', 'label_numeric',
+                    'open', 'high', 'low', 'close', 'volume',
+                    'price_target_pct', 'future_price', 'future_return']
+    feature_cols = [col for col in df_train.columns if col not in exclude_cols and 'future' not in col.lower() and 'target' not in col.lower()]
 
-    X_train = df_train[feature_cols].fillna(0)
-    y_train = df_train['triple_barrier_label']
+    X_train = df_train[feature_cols].fillna(0).replace([np.inf, -np.inf], 0)
+
+    # Fix labels: map -1 -> 0 for binary classification
+    y_train = df_train['triple_barrier_label'].replace(-1, 0).astype(int)
 
     logger.info(f"\nFeatures: {len(feature_cols)}")
     logger.info(f"Train label distribution:")

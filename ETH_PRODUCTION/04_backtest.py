@@ -37,12 +37,16 @@ SLIPPAGE = 0.0005  # 0.05%
 
 # Intelligent filtering thresholds
 MIN_CONFIDENCE = 0.65
-MAX_VOLATILITY_1D = 0.04  # 4%
-MAX_VOLATILITY_4H = 0.03  # 3%
-MAX_VOLATILITY_1W = 0.05  # 5%
-MIN_VOLUME_RATIO = 1.2
-MIN_ADX = 20
-MIN_MOMENTUM_ALIGNMENT = 2  # At least 2/3 timeframes agree
+MAX_VOLATILITY_1D = 0.05  # 5%
+MAX_VOLATILITY_4H = 0.04  # 4%
+MAX_VOLATILITY_1W = 0.06  # 6%
+MIN_VOLUME_RATIO = 0.8
+MIN_ADX = 15
+MIN_MOMENTUM_ALIGNMENT = 1  # At least 1/3 timeframes agree (relaxed)
+
+# Bear market filter
+MAX_CONSECUTIVE_LOSSES = 2
+COOLDOWN_DAYS = 5
 
 
 def calculate_volatility(df, col='close', window=20):
@@ -91,6 +95,12 @@ def intelligent_signal_filter(row, df, idx):
     if momentum_align < MIN_MOMENTUM_ALIGNMENT:
         return False, "poor_momentum_alignment"
 
+    # 6. Bear market filter - price below SMA20
+    if '1d_sma_20' in row.index and pd.notna(row['1d_sma_20']) and row['1d_sma_20'] > 0:
+        dist_sma20 = (row['close'] / row['1d_sma_20']) - 1
+        if dist_sma20 < -0.03:
+            return False, "bear_sma20"
+
     return True, "pass"
 
 
@@ -116,7 +126,7 @@ def backtest():
     logger.info(f"Test period: {len(df_test)} days ({BACKTEST_START} to {BACKTEST_END})")
 
     # Prepare features
-    X_test = df_test[feature_cols].fillna(0)
+    X_test = df_test[feature_cols].fillna(0).replace([np.inf, -np.inf], 0)
 
     # Get predictions and probabilities
     y_pred = model.predict(X_test)
@@ -131,6 +141,9 @@ def backtest():
     in_position = False
     entry_price = 0
     entry_date = None
+    entry_row = None
+    consecutive_losses = 0
+    cooldown_until = None
 
     total_signals = 0
     filtered_signals = 0
@@ -139,6 +152,12 @@ def backtest():
     for idx, row in df_test.iterrows():
         if row['prediction'] == 1 and not in_position:
             total_signals += 1
+
+            # Cooldown check
+            if cooldown_until is not None and row['date'] <= cooldown_until:
+                filtered_signals += 1
+                filter_reasons['cooldown'] = filter_reasons.get('cooldown', 0) + 1
+                continue
 
             # Apply intelligent filtering
             df_idx = df_test.index.get_loc(idx)
@@ -152,6 +171,7 @@ def backtest():
             # Enter position
             entry_price = row['close'] * (1 + SLIPPAGE)
             entry_date = row['date']
+            entry_row = row
             in_position = True
             position_size = capital * POSITION_SIZE
             shares = position_size / entry_price
@@ -192,6 +212,7 @@ def backtest():
 
                 logger.info(f"EXIT (TP): {row['date'].date()} @ ${exit_price:.2f} | PnL: ${pnl:.2f} ({pnl_pct:+.2f}%)")
                 in_position = False
+                consecutive_losses = 0
 
             elif hit_sl:
                 # SL hit
@@ -216,6 +237,25 @@ def backtest():
 
                 logger.info(f"EXIT (SL): {row['date'].date()} @ ${exit_price:.2f} | PnL: ${pnl:.2f} ({pnl_pct:+.2f}%)")
                 in_position = False
+                consecutive_losses += 1
+                if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                    from datetime import timedelta
+                    cooldown_until = row['date'] + timedelta(days=COOLDOWN_DAYS)
+                    logger.info(f"  >>> {MAX_CONSECUTIVE_LOSSES} losses -> cooldown until {cooldown_until.date()}")
+
+    # Close any open position at last price
+    if in_position:
+        last_price = df_test.iloc[-1]['close']
+        exit_value = shares * last_price
+        capital += exit_value - (exit_value * TRADING_FEE)
+        pnl = exit_value - (shares * entry_price)
+        pnl_pct = (last_price / entry_price - 1) * 100
+        trades.append({
+            'entry_date': entry_date, 'exit_date': df_test.iloc[-1]['date'],
+            'entry_price': entry_price, 'exit_price': last_price,
+            'exit_type': 'EOD', 'pnl': pnl, 'pnl_pct': pnl_pct, 'confidence': 0
+        })
+        logger.info(f"EXIT (EOD): last day @ ${last_price:.2f} | PnL: {pnl_pct:+.2f}%")
 
     # Results
     trades_df = pd.DataFrame(trades)

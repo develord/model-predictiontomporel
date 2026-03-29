@@ -1,0 +1,51 @@
+{
+  "crypto": "SOL",
+  "model_type": "XGBoost",
+  "train_end": "2024-12-31",
+  "n_features": 384,
+  "train_samples": 1603,
+  "train_tp_samples": 1217,
+  "train_sl_samples": 386,
+  "top_features": [
+    {
+      "feature": "1d_hist_vol_20",
+      "importance": 0.015018831007182598
+    },
+    {
+      "feature": "1d_btc_volatility_7",
+      "importance": 0.01435729581862688
+    },
+    {
+      "feature": "1d_bb_width",
+      "importance": 0.01379774883389473
+    },
+    {
+      "feature": "1d_sma_20",
+      "importance": 0.01356798317283392
+    },
+    {
+      "feature": "1d_keltner_middle",
+      "importance": 0.012973558157682419
+    },
+    {
+      "feature": "1d_vwap_20",
+      "importance": 0.011724141426384449
+    },
+    {
+      "feature": "1d_price_vs_mean_14",
+      "importance": 0.011449321173131466
+    },
+    {
+      "feature": "1d_volatility_14",
+      "importance": 0.011419562622904778
+    },
+    {
+      "feature": "1d_close_lag_5",
+      "importance": 0.011376630514860153
+    },
+    {
+      "feature": "1d_bb_percent",
+      "importance": 0.011181188747286797
+    }
+  ]
+}
