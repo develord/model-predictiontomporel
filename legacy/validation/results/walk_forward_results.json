@@ -1,0 +1,118 @@
+{
+  "crypto_results": {
+    "btc": {
+      "Period_1": {
+        "threshold": 0.49999999999999994,
+        "n_features": 243,
+        "n_trades": 154,
+        "win_rate": 44.15584415584416,
+        "roi": 44.05064273013736,
+        "final_capital": 1440.5064273013736,
+        "sharpe": 3.3350149908150812,
+        "max_drawdown": 24.400559226365917
+      },
+      "Period_2": {
+        "threshold": 0.44999999999999996,
+        "n_features": 243,
+        "n_trades": 167,
+        "win_rate": 63.47305389221557,
+        "roi": 206.16949647730235,
+        "final_capital": 3061.6949647730235,
+        "sharpe": 9.487580822356067,
+        "max_drawdown": 5.844840483955868
+      },
+      "Period_3": {
+        "threshold": 0.49999999999999994,
+        "n_features": 243,
+        "n_trades": 263,
+        "win_rate": 34.98098859315589,
+        "roi": 8.59104846637681,
+        "final_capital": 1085.910484663768,
+        "sharpe": 0.4455627614807851,
+        "max_drawdown": 20.59030821201229
+      }
+    },
+    "eth": {
+      "Period_1": {
+        "threshold": 0.49999999999999994,
+        "n_features": 354,
+        "n_trades": 279,
+        "win_rate": 43.01075268817204,
+        "roi": 80.3337542595848,
+        "final_capital": 1803.337542595848,
+        "sharpe": 2.778037673135811,
+        "max_drawdown": 34.64113933123003
+      },
+      "Period_2": {
+        "threshold": 0.3,
+        "n_features": 354,
+        "n_trades": 187,
+        "win_rate": 64.1711229946524,
+        "roi": 260.47039634997464,
+        "final_capital": 3604.7039634997464,
+        "sharpe": 9.298905033845537,
+        "max_drawdown": 10.003169225191751
+      },
+      "Period_3": {
+        "threshold": 0.2,
+        "n_features": 354,
+        "n_trades": 209,
+        "win_rate": 54.066985645933016,
+        "roi": 161.09121300512842,
+        "final_capital": 2610.9121300512843,
+        "sharpe": 6.305538552002901,
+        "max_drawdown": 7.993843405461173
+      }
+    },
+    "sol": {
+      "Period_1": {
+        "threshold": 0.49999999999999994,
+        "n_features": 50,
+        "n_trades": 229,
+        "win_rate": 65.06550218340611,
+        "roi": 403.3632789096493,
+        "final_capital": 5033.632789096493,
+        "sharpe": 10.34864283096991,
+        "max_drawdown": 8.637876492019378
+      },
+      "Period_2": {
+        "threshold": 0.2,
+        "n_features": 50,
+        "n_trades": 133,
+        "win_rate": 58.64661654135338,
+        "roi": 111.12012987304925,
+        "final_capital": 2111.2012987304925,
+        "sharpe": 7.621159105269226,
+        "max_drawdown": 7.25187164897375
+      },
+      "Period_3": {
+        "threshold": 0.3,
+        "n_features": 50,
+        "n_trades": 225,
+        "win_rate": 54.666666666666664,
+        "roi": 189.62481610154686,
+        "final_capital": 2896.2481610154687,
+        "sharpe": 5.959361551841,
+        "max_drawdown": 13.992290530963924
+      }
+    }
+  },
+  "portfolio_results": {
+    "Period_1": {
+      "roi": 175.91589196645714,
+      "win_rate": 50.90634441087614,
+      "total_trades": 662
+    },
+    "Period_2": {
+      "roi": 192.58667423344207,
+      "win_rate": 62.422997946611915,
+      "total_trades": 487
+    },
+    "Period_3": {
+      "roi": 119.76902585768403,
+      "win_rate": 47.05882352941176,
+      "total_trades": 697
+    }
+  },
+  "timestamp": "2026-03-21T03:30:05.212941"
+}

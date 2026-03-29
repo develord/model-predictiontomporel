@@ -1,0 +1,154 @@
+{
+  "_description": "Crypto-specific configuration - Optimized from V9 results",
+  "_version": "10.0.0",
+  "_last_updated": "2026-03-20",
+
+  "_IMPORTANT_PRICE_TARGET_LOGIC": {
+    "description": "V10 uses DYNAMIC TP/SL based on regression model predictions",
+    "workflow": [
+      "1. Classification model predicts: BUY/SELL/HOLD + confidence",
+      "2. Regression model predicts: price_target_pct (e.g., +8.5%)",
+      "3. Dynamic TP = predicted_target × tp_multiplier (e.g., 8.5% × 0.75 = 6.375%)",
+      "4. Dynamic SL = predicted_target × sl_risk_ratio (e.g., 8.5% × 0.35 = 2.975%)",
+      "5. Fallback: If regression unavailable, use fallback_tp_pct/sl_pct from V9"
+    ],
+    "example_btc": {
+      "classification": "BUY with 65% confidence",
+      "regression": "predicts +10% move",
+      "dynamic_tp": "10% × 0.75 = 7.5% (take 75% of predicted target)",
+      "dynamic_sl": "10% × 0.35 = 3.5% (risk 35% of predicted target)",
+      "risk_reward": "7.5% / 3.5% = 2.14 R:R ratio"
+    },
+    "rationale": "Fixed TP/SL ignores market context. Big moves deserve wider TP. Small moves need tighter TP/SL. This is the KEY innovation of V10."
+  },
+
+  "BTC": {
+    "symbol": "BTCUSDT",
+    "name": "Bitcoin",
+    "description": "Market leader, lower volatility",
+
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 40% to increase trade frequency)",
+
+    "tp_multiplier": 0.75,
+    "sl_risk_ratio": 0.35,
+    "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
+
+    "fallback_tp_pct": 5.0,
+    "fallback_sl_pct": 3.0,
+    "_comment_fallback": "Only if regression model unavailable (V9 baseline: +8.82% ROI)",
+
+    "position_size_base": 1.0,
+    "position_size_max": 1.5,
+    "_comment_position": "Conservative sizing for BTC, can increase on high confidence",
+
+    "min_magnitude_pct": 3.0,
+    "_comment_magnitude": "Only trade if regression predicts >3% move",
+
+    "lookback_days": 90,
+    "_comment_lookback": "90 days for feature calculation",
+
+    "train_test_split": 0.75,
+    "_comment_split": "75% train, 25% test"
+  },
+
+  "ETH": {
+    "symbol": "ETHUSDT",
+    "name": "Ethereum",
+    "description": "Altcoin leader, correlated with BTC",
+
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 50% to increase trade frequency)",
+
+    "tp_multiplier": 0.75,
+    "sl_risk_ratio": 0.35,
+    "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
+
+    "fallback_tp_pct": 5.0,
+    "fallback_sl_pct": 3.0,
+    "_comment_fallback": "Only if regression model unavailable (V9 baseline: +70.51% ROI)",
+
+    "position_size_base": 1.0,
+    "position_size_max": 2.0,
+    "_comment_position": "Can be more aggressive, ETH responds well to BTC influence",
+
+    "min_magnitude_pct": 3.0,
+    "_comment_magnitude": "Only trade if regression predicts >3% move",
+
+    "lookback_days": 90,
+    "train_test_split": 0.75,
+
+    "btc_influence_weight": 1.0,
+    "_comment_btc": "BTC influence features CRITICAL for ETH (0% → 70.51% ROI)"
+  },
+
+  "SOL": {
+    "symbol": "SOLUSDT",
+    "name": "Solana",
+    "description": "High volatility altcoin, strong BTC correlation",
+
+    "confidence_threshold": 0.35,
+    "_comment_confidence": "V10 improved: 35% (lowered from 55% to increase trade frequency)",
+
+    "tp_multiplier": 0.75,
+    "sl_risk_ratio": 0.35,
+    "_comment_tp_sl": "TP = predicted_target × 0.75, SL = predicted_target × 0.35",
+
+    "fixed_tp_pct": 1.5,
+    "fixed_sl_pct": 0.75,
+    "_comment_fixed": "V10 improved: Fixed TP/SL minimums to prevent too-tight stops",
+
+    "fallback_tp_pct": 7.0,
+    "fallback_sl_pct": 3.5,
+    "_comment_fallback": "Only if regression model unavailable (V9 baseline: -18.52% ROI)",
+
+    "position_size_base": 0.8,
+    "position_size_max": 1.2,
+    "_comment_position": "Smaller sizing due to higher volatility and poor V9 performance",
+
+    "min_magnitude_pct": 4.0,
+    "_comment_magnitude": "Higher threshold (4%) due to volatility",
+
+    "lookback_days": 90,
+    "train_test_split": 0.75,
+
+    "btc_influence_weight": 1.2,
+    "_comment_btc": "SOL heavily influenced by BTC, increase weight",
+
+    "volatility_adjustment": true,
+    "_comment_volatility": "Enable ATR-based TP/SL adjustment for SOL"
+  },
+
+  "_global_settings": {
+    "use_confidence_filtering": true,
+    "_comment_filtering": "CRITICAL: Confidence filtering = +29.36% difference (V9 proven)",
+
+    "fees_pct": 0.1,
+    "slippage_pct": 0.05,
+    "_comment_costs": "0.1% fees + 0.05% slippage = 0.15% per trade (0.30% round-trip)",
+
+    "max_drawdown_pct": 15.0,
+    "_comment_drawdown": "Stop trading if portfolio down >15%",
+
+    "risk_per_trade_pct": 2.0,
+    "_comment_risk": "Risk max 2% of portfolio per trade (Kelly criterion)",
+
+    "max_open_positions": 3,
+    "_comment_positions": "Max 3 open positions (1 per crypto)",
+
+    "backtesting": {
+      "start_date": "2024-01-01",
+      "end_date": "2026-03-20",
+      "initial_capital": 10000,
+      "_comment": "Backtest on 2024-2026 period (out-of-sample from training)"
+    }
+  }
+}
