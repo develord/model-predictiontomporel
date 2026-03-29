@@ -7,13 +7,14 @@ Usage:
     python 04_backtest.py
 """
 
+import sys
 import pandas as pd
 import numpy as np
+import torch
 from pathlib import Path
 import logging
 import joblib
 import json
-import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,6 +105,56 @@ def intelligent_signal_filter(row, df, idx):
     return True, "pass"
 
 
+def load_btc_signals():
+    """Load BTC CNN model and generate daily signals for Q1 2026"""
+    BTC_DIR = BASE_DIR.parent / 'BTC_PRODUCTION'
+    sys.path.insert(0, str(BTC_DIR / 'scripts'))
+
+    try:
+        from direction_prediction_model import CNNDirectionModel
+
+        # Load BTC model
+        ckpt = torch.load(BTC_DIR / 'models' / 'BTC_direction_model.pt', map_location='cpu', weights_only=False)
+        btc_model = CNNDirectionModel(
+            feature_dim=ckpt.get('feature_dim', 99),
+            sequence_length=ckpt.get('sequence_length', 30),
+            dropout=0.35
+        )
+        btc_model.load_state_dict(ckpt['model_state_dict'])
+        btc_model.eval()
+
+        # Load BTC features
+        with open(BTC_DIR / 'required_features.json') as f:
+            btc_feature_cols = json.load(f)
+
+        btc_scaler = joblib.load(BTC_DIR / 'models' / 'feature_scaler.joblib')
+
+        btc_df = pd.read_csv(BTC_DIR / 'data' / 'cache' / 'btc_features.csv')
+        btc_df['date'] = pd.to_datetime(btc_df['date'])
+
+        seq_len = ckpt.get('sequence_length', 30)
+        btc_features = btc_df[btc_feature_cols].fillna(0).values
+        btc_features = np.nan_to_num(btc_scaler.transform(btc_features), nan=0.0, posinf=0.0, neginf=0.0)
+        btc_features = np.clip(btc_features, -5, 5)
+
+        # Generate signals for each date
+        signals = {}
+        for i in range(seq_len, len(btc_df)):
+            seq = btc_features[i-seq_len:i]
+            X = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                direction, confidence = btc_model.predict_direction(X)
+            date = btc_df.iloc[i]['date'].normalize()  # Normalize to midnight
+            signals[date] = {'direction': direction.item(), 'confidence': confidence.item()}
+
+        logger.info(f"BTC signals loaded: {len(signals)} days")
+        return signals
+
+    except Exception as e:
+        logger.warning(f"Could not load BTC signals: {e}")
+        return None
+
+
 def backtest():
     """Run intelligent backtest on Q1 2026 data"""
     logger.info(f"\n{'='*70}")
@@ -124,6 +175,9 @@ def backtest():
     # Filter backtest period
     df_test = df[(df['date'] >= BACKTEST_START) & (df['date'] <= BACKTEST_END)].copy()
     logger.info(f"Test period: {len(df_test)} days ({BACKTEST_START} to {BACKTEST_END})")
+
+    # Load BTC signals for transfer learning filter
+    btc_signals = load_btc_signals()
 
     # Prepare features
     X_test = df_test[feature_cols].fillna(0).replace([np.inf, -np.inf], 0)
@@ -158,6 +212,17 @@ def backtest():
                 filtered_signals += 1
                 filter_reasons['cooldown'] = filter_reasons.get('cooldown', 0) + 1
                 continue
+
+            # BTC transfer filter: don't go LONG if BTC is bearish
+            if btc_signals is not None:
+                lookup_date = row['date'].normalize()
+                btc_sig = btc_signals.get(lookup_date, None)
+                if btc_sig is not None:
+                    # Block only on extreme BTC bearish (>75%)
+                    if btc_sig['direction'] == 0 and btc_sig['confidence'] > 0.75:
+                        filtered_signals += 1
+                        filter_reasons['btc_bearish'] = filter_reasons.get('btc_bearish', 0) + 1
+                        continue
 
             # Apply intelligent filtering
             df_idx = df_test.index.get_loc(idx)
