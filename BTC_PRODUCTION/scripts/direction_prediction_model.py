@@ -265,6 +265,102 @@ class LightweightDirectionModel(nn.Module):
         return direction, confidence
 
 
+class CNNDirectionModel(nn.Module):
+    """
+    1D-CNN with temporal attention for direction prediction.
+    Much fewer parameters than GRU/LSTM, resistant to overfitting.
+    Detects local patterns in time series using convolutions.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int = 99,
+        sequence_length: int = 30,
+        dropout: float = 0.3
+    ):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.sequence_length = sequence_length
+
+        # Feature projection
+        self.input_proj = nn.Sequential(
+            nn.Linear(feature_dim, 64),
+            nn.BatchNorm1d(sequence_length),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+
+        # Multi-scale 1D convolutions (detect patterns at different scales)
+        self.conv3 = nn.Conv1d(64, 32, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv1d(64, 32, kernel_size=5, padding=2)
+        self.conv7 = nn.Conv1d(64, 32, kernel_size=7, padding=3)
+
+        self.bn_conv = nn.BatchNorm1d(96)  # 32*3 channels
+        self.conv_drop = nn.Dropout(dropout)
+
+        # Second conv layer
+        self.conv2 = nn.Sequential(
+            nn.Conv1d(96, 48, kernel_size=3, padding=1),
+            nn.BatchNorm1d(48),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+
+        # Temporal attention
+        self.attention = nn.Sequential(
+            nn.Linear(48, 16),
+            nn.Tanh(),
+            nn.Linear(16, 1)
+        )
+
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(48, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout * 0.5),
+            nn.Linear(32, 2)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (batch, seq_len, feature_dim) -> (batch, 2)"""
+        # Project features
+        x = self.input_proj(x)  # (B, T, 64)
+
+        # Transpose for conv1d: (B, C, T)
+        x = x.permute(0, 2, 1)
+
+        # Multi-scale convolutions
+        c3 = F.relu(self.conv3(x))
+        c5 = F.relu(self.conv5(x))
+        c7 = F.relu(self.conv7(x))
+        x = torch.cat([c3, c5, c7], dim=1)  # (B, 96, T)
+
+        x = self.bn_conv(x)
+        x = self.conv_drop(x)
+
+        # Second conv
+        x = self.conv2(x)  # (B, 48, T)
+
+        # Transpose back: (B, T, 48)
+        x = x.permute(0, 2, 1)
+
+        # Temporal attention pooling
+        attn_weights = self.attention(x)  # (B, T, 1)
+        attn_weights = F.softmax(attn_weights, dim=1)
+        x = (x * attn_weights).sum(dim=1)  # (B, 48)
+
+        # Classify
+        return self.classifier(x)
+
+    def predict_direction(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            probs = F.softmax(logits, dim=1)
+            confidence, direction = torch.max(probs, dim=1)
+        return direction, confidence
+
+
 class EnsembleDirectionModel(nn.Module):
     """
     Ensemble de modèles pour prédiction plus robuste

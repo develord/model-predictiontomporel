@@ -1,7 +1,7 @@
 """
 BTC Data Download Script
 ========================
-Downloads 1d BTC data from Binance for PyTorch model
+Downloads multi-timeframe BTC data from Binance (4h, 1d, 1w)
 
 Usage:
     python 01_download_data.py
@@ -21,8 +21,8 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CRYPTO = 'BTC'
-TIMEFRAME = '1d'  # PyTorch model uses 1d data only
-START_DATE = '2018-01-01'
+TIMEFRAMES = ['4h', '1d', '1w']
+START_DATE = '2017-01-01'
 
 
 def download_data(crypto, timeframe, since):
@@ -56,17 +56,19 @@ def download_data(crypto, timeframe, since):
     output_file = DATA_DIR / f'{crypto.lower()}_{timeframe}_data.csv'
     df.to_csv(output_file, index=False)
 
-    logger.info(f"  ✓ Saved {len(df)} candles to {output_file}")
+    logger.info(f"  Saved {len(df)} candles to {output_file}")
     return df
 
 
 if __name__ == "__main__":
     logger.info(f"\n{'='*70}")
-    logger.info(f"DOWNLOADING {CRYPTO} DATA")
+    logger.info(f"DOWNLOADING {CRYPTO} MULTI-TIMEFRAME DATA")
     logger.info(f"{'='*70}\n")
 
-    try:
-        download_data(CRYPTO, TIMEFRAME, START_DATE)
-        logger.info(f"\n✓ {CRYPTO} data downloaded successfully!")
-    except Exception as e:
-        logger.error(f"Error downloading data: {e}")
+    for tf in TIMEFRAMES:
+        try:
+            download_data(CRYPTO, tf, START_DATE)
+        except Exception as e:
+            logger.error(f"Error downloading {tf}: {e}")
+
+    logger.info(f"\nAll {CRYPTO} data downloaded!")
