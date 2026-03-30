@@ -101,14 +101,15 @@ class LiveTradingSystem:
                 self.data_mgr.buffers, coin, long_feat_cols, long_scaler, SEQUENCE_LENGTH
             )
 
-        # Compute SHORT features
+        # Compute SHORT features (may need different seq_len)
         short_feat_cols = self.signal_gen.short_features.get(coin, [])
         short_scaler = self.signal_gen.short_scalers.get(coin)
+        short_seq = getattr(self.signal_gen, 'short_seq_lens', {}).get(coin, SEQUENCE_LENGTH)
 
         short_scaled = None
         if short_feat_cols and short_scaler:
             short_scaled, raw_row_s = compute_features(
-                self.data_mgr.buffers, coin, short_feat_cols, short_scaler, SEQUENCE_LENGTH
+                self.data_mgr.buffers, coin, short_feat_cols, short_scaler, short_seq
             )
             if raw_row is None:
                 raw_row = raw_row_s

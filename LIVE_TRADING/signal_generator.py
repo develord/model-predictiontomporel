@@ -77,6 +77,11 @@ class SignalGenerator:
             try:
                 m = self._load_one_model(MODEL_DIR / cfg['short_model'])
                 if m:
+                    # Store seq_len from checkpoint
+                    ckpt = torch.load(MODEL_DIR / cfg['short_model'], map_location='cpu', weights_only=False)
+                    self.short_seq_lens = getattr(self, 'short_seq_lens', {})
+                    self.short_seq_lens[coin] = ckpt.get('sequence_length', 30)
+                if m:
                     self.short_models[coin] = m
                     s = MODEL_DIR / cfg['short_scaler']
                     if s.exists():
