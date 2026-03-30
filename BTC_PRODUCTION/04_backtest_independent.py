@@ -46,7 +46,7 @@ SL_PCT = 0.0075
 
 # Thresholds (per direction)
 LONG_CONF = 0.60
-SHORT_CONF = 0.52  # V2 model is more conservative, lower threshold needed
+SHORT_CONF = 0.55  # V6 model
 
 # Filters
 MAX_CONSEC_LOSSES = 2
@@ -65,7 +65,7 @@ def load_model(model_dir, model_file):
     seq_len = ckpt.get('sequence_length', 30)
     model_type = ckpt.get('model_type', 'cnn')
 
-    if model_type == 'deep_cnn_short':
+    if False:  # DeepCNN removed - use CNNDirectionModel for all
         # Import DeepCNNShortModel
         spec = import_module('03_train_short_model')
         model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
@@ -111,16 +111,14 @@ def get_tp_sl(row, entry, direction, s_tp=0.020, s_sl=0.010):
             tp_m, sl_m = TP_PCT, SL_PCT
         return entry * (1 + tp_m), entry * (1 - sl_m)
     else:
-        # SHORT uses its own TP/SL from training
-        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-            tp_m = min(max(atr / entry, 0.01), 0.04)
-            sl_m = tp_m * 0.5
-        else:
-            tp_m, sl_m = s_tp, s_sl
-        return entry * (1 - tp_m), entry * (1 + sl_m)
+        # SHORT: model detects -2% drops, but execution uses wider SL (3%) for rebounds
+        # With x2 leverage: position halved, so risk stays same
+        exec_tp = max(s_tp, 0.03)   # At least 3% TP
+        exec_sl = max(s_sl, 0.03)   # At least 3% SL (survives intraday rebounds)
+        return entry * (1 - exec_tp), entry * (1 + exec_sl)
 
 
-def sim_trade(entry, date, df_15m, tp, sl, direction, max_d=10):
+def sim_trade(entry, date, df_15m, tp, sl, direction, max_d=20):
     for d in range(1, max_d + 1):
         day = date + timedelta(days=d)
         intra = df_15m[(df_15m.index >= day) & (df_15m.index < day + timedelta(days=1))]

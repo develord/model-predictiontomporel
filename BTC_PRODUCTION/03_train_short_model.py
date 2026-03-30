@@ -38,7 +38,7 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 45  # Longer to capture distribution/top patterns
+SEQUENCE_LENGTH = 30  # Match LONG model
 BATCH_SIZE = 64
 EPOCHS = 250
 LEARNING_RATE = 0.0005
@@ -47,7 +47,8 @@ GRAD_CLIP = 0.5
 NOISE_STD = 0.01
 LABEL_SMOOTHING = 0.1
 
-# Balanced labels: TP=2% drop, SL=1% rise (ratio ~1:1)
+# Train labels: detect -2% drops (model learns the pattern)
+# Execution SL will be wider (3-4%) via leverage in backtest
 SHORT_TP_PCT = 0.020
 SHORT_SL_PCT = 0.010
 
@@ -308,9 +309,10 @@ def train():
 
     # Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
+    from direction_prediction_model import CNNDirectionModel
+    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
@@ -358,7 +360,7 @@ def train():
                 'model_state_dict': model.state_dict(),
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
-                'model_type': 'deep_cnn_short',
+                'model_type': 'cnn',
                 'short_tp_pct': SHORT_TP_PCT,
                 'short_sl_pct': SHORT_SL_PCT,
                 'epoch': epoch + 1,
