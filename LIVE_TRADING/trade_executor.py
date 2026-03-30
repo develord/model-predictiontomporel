@@ -134,35 +134,29 @@ class TradeExecutor:
             entry_price = float(entry_order.get('avgPrice', price))
             logger.info(f"{coin}: Entry filled @ {entry_price}")
 
-            # 2. Take Profit order
+            # 2. Take Profit (LIMIT sell at TP price)
             tp_order = None
             try:
                 tp_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol,
-                    'side': 'SELL',
-                    'type': 'TAKE_PROFIT_MARKET',
-                    'stopPrice': tp_price,
-                    'quantity': quantity,
-                    'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'SELL', 'type': 'LIMIT',
+                    'price': tp_price, 'quantity': quantity,
+                    'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: TP order placed @ {tp_price}")
+                logger.info(f"{coin}: TP LIMIT @ {tp_price}")
             except Exception as e:
-                logger.warning(f"{coin}: TP order failed ({e})")
+                logger.warning(f"{coin}: TP failed ({e})")
 
-            # 3. Stop Loss order
+            # 3. Stop Loss (STOP sell at SL price)
             sl_order = None
             try:
                 sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol,
-                    'side': 'SELL',
-                    'type': 'STOP_MARKET',
-                    'stopPrice': sl_price,
-                    'quantity': quantity,
-                    'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'SELL', 'type': 'STOP',
+                    'price': sl_price, 'stopPrice': sl_price,
+                    'quantity': quantity, 'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: SL order placed @ {sl_price}")
+                logger.info(f"{coin}: SL STOP @ {sl_price}")
             except Exception as e:
-                logger.warning(f"{coin}: SL order failed ({e})")
+                logger.warning(f"{coin}: SL failed ({e})")
 
             return {
                 'coin': coin,
@@ -227,25 +221,27 @@ class TradeExecutor:
             entry_price = float(entry_order.get('avgPrice', price))
             logger.info(f"{coin}: SHORT entry filled @ {entry_price}")
 
-            # TP order (buy back at lower price)
+            # TP order (LIMIT buy back at lower price)
             tp_order = None
             try:
                 tp_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'BUY', 'type': 'TAKE_PROFIT_MARKET',
-                    'stopPrice': tp_price, 'quantity': quantity, 'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'BUY', 'type': 'LIMIT',
+                    'price': tp_price, 'quantity': quantity,
+                    'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: SHORT TP @ {tp_price}")
+                logger.info(f"{coin}: SHORT TP LIMIT @ {tp_price}")
             except Exception as e:
                 logger.warning(f"{coin}: SHORT TP failed ({e})")
 
-            # SL order (buy back at higher price)
+            # SL order (STOP buy back at higher price)
             sl_order = None
             try:
                 sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'BUY', 'type': 'STOP_MARKET',
-                    'stopPrice': sl_price, 'quantity': quantity, 'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'BUY', 'type': 'STOP',
+                    'price': sl_price, 'stopPrice': sl_price,
+                    'quantity': quantity, 'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: SHORT SL @ {sl_price}")
+                logger.info(f"{coin}: SHORT SL STOP @ {sl_price}")
             except Exception as e:
                 logger.warning(f"{coin}: SHORT SL failed ({e})")
 

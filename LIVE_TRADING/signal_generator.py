@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
-from direction_prediction_model import CNNDirectionModel
+from direction_prediction_model import CNNDirectionModel, DeepCNNShortModel
 
 from config import MODEL_DIR, COINS, FILTERS, TRADING
 
@@ -37,13 +37,19 @@ class SignalGenerator:
         self.short_cool = {coin: None for coin in COINS}
 
     def _load_one_model(self, path):
-        """Load a single CNN model from checkpoint"""
+        """Load a CNN model - auto-detect DeepCNNShortModel vs CNNDirectionModel"""
         if not path.exists():
             return None
         ckpt = torch.load(path, map_location='cpu', weights_only=False)
         feat_dim = ckpt.get('feature_dim', 99)
         seq_len = ckpt.get('sequence_length', 30)
-        model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
+        model_type = ckpt.get('model_type', 'cnn')
+
+        if model_type == 'deep_cnn_short':
+            model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+        else:
+            model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
+
         model.load_state_dict(ckpt['model_state_dict'])
         model.eval()
         return model
