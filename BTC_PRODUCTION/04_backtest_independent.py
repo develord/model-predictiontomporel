@@ -23,6 +23,10 @@ BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR / 'scripts'))
 from direction_prediction_model import CNNDirectionModel
 
+# Import DeepCNNShortModel from training script
+sys.path.insert(0, str(BASE_DIR))
+from importlib import import_module
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,7 @@ SL_PCT = 0.0075
 
 # Thresholds (per direction)
 LONG_CONF = 0.60
-SHORT_CONF = 0.60  # Optimized from analysis
+SHORT_CONF = 0.52  # V2 model is more conservative, lower threshold needed
 
 # Filters
 MAX_CONSEC_LOSSES = 2
@@ -55,16 +59,22 @@ BACKTEST_END = '2026-03-24'
 def load_model(model_dir, model_file):
     path = model_dir / model_file
     if not path.exists():
-        return None, None
+        return None, None, None
     ckpt = torch.load(path, map_location='cpu', weights_only=False)
-    model = CNNDirectionModel(
-        feature_dim=ckpt.get('feature_dim', 99),
-        sequence_length=ckpt.get('sequence_length', 30),
-        dropout=0.4
-    )
+    feat_dim = ckpt.get('feature_dim', 99)
+    seq_len = ckpt.get('sequence_length', 30)
+    model_type = ckpt.get('model_type', 'cnn')
+
+    if model_type == 'deep_cnn_short':
+        # Import DeepCNNShortModel
+        spec = import_module('03_train_short_model')
+        model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+    else:
+        model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
+
     model.load_state_dict(ckpt['model_state_dict'])
     model.eval()
-    return model, ckpt.get('sequence_length', 30)
+    return model, seq_len, ckpt
 
 
 def fetch_15min():
@@ -91,16 +101,22 @@ def fetch_15min():
     return df
 
 
-def get_tp_sl(row, entry, direction):
+def get_tp_sl(row, entry, direction, s_tp=0.020, s_sl=0.010):
     atr = row.get('1d_atr_14', None)
-    if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-        tp_m = min(max(atr / entry, 0.008), 0.03)
-        sl_m = tp_m * 0.5
-    else:
-        tp_m, sl_m = TP_PCT, SL_PCT
     if direction == 'LONG':
+        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
+            tp_m = min(max(atr / entry, 0.008), 0.03)
+            sl_m = tp_m * 0.5
+        else:
+            tp_m, sl_m = TP_PCT, SL_PCT
         return entry * (1 + tp_m), entry * (1 - sl_m)
     else:
+        # SHORT uses its own TP/SL from training
+        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
+            tp_m = min(max(atr / entry, 0.01), 0.04)
+            sl_m = tp_m * 0.5
+        else:
+            tp_m, sl_m = s_tp, s_sl
         return entry * (1 - tp_m), entry * (1 + sl_m)
 
 
@@ -188,25 +204,51 @@ def backtest():
     logger.info(f"{'='*70}\n")
 
     # Load models
-    long_model, long_seq = load_model(LONG_MODEL_DIR, 'BTC_direction_model.pt')
-    short_model, short_seq = load_model(SHORT_MODEL_DIR, 'BTC_short_model.pt')
+    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'BTC_direction_model.pt')
+    short_model, short_seq, short_ckpt = load_model(SHORT_MODEL_DIR, 'BTC_short_model.pt')
     if not long_model or not short_model:
         logger.error("Missing model(s)")
         return
 
+    # LONG features
     with open(BASE_DIR / 'required_features.json') as f:
-        feature_cols = json.load(f)
+        long_feature_cols = json.load(f)
+
+    # SHORT features (may include bear-specific features)
+    with open(SHORT_MODEL_DIR / 'short_features.json') as f:
+        short_feature_cols = json.load(f)
 
     long_scaler = joblib.load(LONG_MODEL_DIR / 'feature_scaler.joblib')
     short_scaler = joblib.load(SHORT_MODEL_DIR / 'feature_scaler_short.joblib')
 
+    # Get SHORT TP/SL from checkpoint
+    short_tp = short_ckpt.get('short_tp_pct', 0.020) if short_ckpt else 0.020
+    short_sl = short_ckpt.get('short_sl_pct', 0.010) if short_ckpt else 0.010
+    logger.info(f"SHORT params: TP={short_tp:.1%} drop, SL={short_sl:.1%} rise")
+
     df = pd.read_csv(DATA_DIR / 'btc_features.csv')
     df['date'] = pd.to_datetime(df['date'])
 
+    # Add bear features for SHORT model
+    from importlib import import_module as imp
+    try:
+        short_train = imp('03_train_short_model')
+        df = short_train.add_bear_features(df)
+    except:
+        pass
+
     df_wide = df[df['date'] >= '2025-01-01'].copy()
-    raw = df_wide[feature_cols].fillna(0).values.astype(np.float32)
-    long_feat = np.clip(np.nan_to_num(long_scaler.transform(raw), nan=0, posinf=0, neginf=0), -5, 5)
-    short_feat = np.clip(np.nan_to_num(short_scaler.transform(raw), nan=0, posinf=0, neginf=0), -5, 5)
+
+    # Prepare LONG features
+    long_raw = df_wide[long_feature_cols].fillna(0).replace([np.inf, -np.inf], 0).values.astype(np.float32)
+    long_feat = np.clip(np.nan_to_num(long_scaler.transform(long_raw), nan=0, posinf=0, neginf=0), -5, 5)
+
+    # Prepare SHORT features (different columns)
+    for c in short_feature_cols:
+        if c not in df_wide.columns:
+            df_wide[c] = 0
+    short_raw = df_wide[short_feature_cols].fillna(0).replace([np.inf, -np.inf], 0).values.astype(np.float32)
+    short_feat = np.clip(np.nan_to_num(short_scaler.transform(short_raw), nan=0, posinf=0, neginf=0), -5, 5)
 
     df_test = df_wide[(df_wide['date'] >= BACKTEST_START) & (df_wide['date'] <= BACKTEST_END)].copy()
     t_start = len(df_wide) - len(df_test)
@@ -286,7 +328,7 @@ def backtest():
             ok, reason = check_short_filters(row, short_consec, short_cool, date)
             if ok:
                 entry = row['close'] * (1 - SLIPPAGE)
-                tp, sl = get_tp_sl(row, entry, 'SHORT')
+                tp, sl = get_tp_sl(row, entry, 'SHORT', short_tp, short_sl)
                 pos_val = capital * POSITION_SIZE
                 capital -= pos_val * TRADING_FEE
 
