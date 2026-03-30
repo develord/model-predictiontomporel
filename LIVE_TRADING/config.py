@@ -6,6 +6,9 @@ All coin configs, trading params, API keys
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / '.env')
 
 BASE_DIR = Path(__file__).parent
 PROJECT_DIR = BASE_DIR.parent

@@ -20,7 +20,7 @@ class TradeExecutor:
         self.connected = False
 
     def connect(self):
-        """Connect to Binance Futures Testnet"""
+        """Connect to Binance Futures Demo Trading (demo-fapi.binance.com)"""
         try:
             self.exchange = ccxt.binance({
                 'apiKey': BINANCE_TESTNET_KEY,
@@ -29,36 +29,50 @@ class TradeExecutor:
                 'options': {
                     'defaultType': 'future',
                     'adjustForTimeDifference': True,
+                    'fetchCurrencies': False,
                 },
             })
-            self.exchange.set_sandbox_mode(True)
 
-            # Test connection
-            balance = self.exchange.fetch_balance()
-            usdt = balance.get('USDT', {}).get('free', 0)
-            logger.info(f"Connected to Binance Futures Testnet | USDT Balance: {usdt}")
+            # Redirect ALL API URLs to demo-fapi
+            demo = 'https://demo-fapi.binance.com'
+            for key in list(self.exchange.urls['api'].keys()):
+                url = self.exchange.urls['api'][key]
+                if isinstance(url, str):
+                    if 'fapi.binance.com' in url:
+                        self.exchange.urls['api'][key] = url.replace('https://fapi.binance.com', demo)
+                    elif 'api.binance.com' in url:
+                        self.exchange.urls['api'][key] = url.replace('https://api.binance.com', demo)
+
+            # Test connection - fetch balance directly
+            balances = self.exchange.fapiPrivateV2GetBalance()
+            usdt_bal = next((b for b in balances if b['asset'] == 'USDT'), None)
+            usdt = float(usdt_bal['availableBalance']) if usdt_bal else 0
+            logger.info(f"Connected to Binance Demo Trading | USDT Balance: {usdt}")
             self.connected = True
             return True
 
         except Exception as e:
-            logger.error(f"Failed to connect to Binance Testnet: {e}")
+            logger.error(f"Failed to connect to Binance Demo: {e}")
+            logger.error("Get demo API keys from: https://www.binance.com/en/demo-trading")
             self.connected = False
             return False
 
     def get_balance(self):
-        """Get USDT balance"""
+        """Get USDT balance from demo"""
         try:
-            balance = self.exchange.fetch_balance()
-            return float(balance.get('USDT', {}).get('free', 0))
+            balances = self.exchange.fapiPrivateV2GetBalance()
+            usdt = next((b for b in balances if b['asset'] == 'USDT'), None)
+            return float(usdt['availableBalance']) if usdt else 0
         except Exception as e:
             logger.error(f"Balance fetch error: {e}")
             return 0
 
     def get_price(self, coin):
-        """Get current price"""
+        """Get current price from demo"""
         try:
-            ticker = self.exchange.fetch_ticker(COINS[coin]['pair'])
-            return ticker['last']
+            symbol = COINS[coin]['pair'].replace('/', '')
+            ticker = self.exchange.fapiPublicGetTickerPrice({'symbol': symbol})
+            return float(ticker['price'])
         except Exception as e:
             logger.error(f"{coin} price fetch error: {e}")
             return None
@@ -85,11 +99,19 @@ class TradeExecutor:
             balance = self.get_balance()
             position_value = balance * TRADING['position_size_pct']
 
-            # Calculate quantity (adjust for coin precision)
-            markets = self.exchange.load_markets()
-            market = self.exchange.market(pair)
-            min_qty = market.get('limits', {}).get('amount', {}).get('min', 0.001)
-            precision = market.get('precision', {}).get('amount', 3)
+            # Get precision from exchange info (futures endpoint)
+            exchange_info = self.exchange.fapiPublicGetExchangeInfo()
+            sym_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+
+            if sym_info:
+                qty_precision = int(sym_info.get('quantityPrecision', 3))
+                price_precision = int(sym_info.get('pricePrecision', 2))
+                min_qty = float(next((f['minQty'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), 0.001))
+            else:
+                qty_precision = 3
+                price_precision = 2
+                min_qty = 0.001
+            precision = qty_precision
 
             quantity = round(position_value / price, precision)
             if quantity < min_qty:
@@ -97,57 +119,50 @@ class TradeExecutor:
                 return None
 
             # TP/SL prices
-            tp_price = round(price * (1 + tp_pct), market.get('precision', {}).get('price', 2))
-            sl_price = round(price * (1 - sl_pct), market.get('precision', {}).get('price', 2))
+            tp_price = round(price * (1 + tp_pct), price_precision)
+            sl_price = round(price * (1 - sl_pct), price_precision)
 
             logger.info(f"{coin}: Opening LONG | Price: {price} | Qty: {quantity} | TP: {tp_price} | SL: {sl_price}")
 
             # 1. Market buy order
-            entry_order = self.exchange.create_order(
-                symbol=pair,
-                type='market',
-                side='buy',
-                amount=quantity,
-            )
-
-            entry_price = float(entry_order.get('average', price))
+            entry_order = self.exchange.fapiPrivatePostOrder({
+                'symbol': symbol,
+                'side': 'BUY',
+                'type': 'MARKET',
+                'quantity': quantity,
+            })
+            entry_price = float(entry_order.get('avgPrice', price))
             logger.info(f"{coin}: Entry filled @ {entry_price}")
 
-            # 2. Take Profit order (limit sell)
+            # 2. Take Profit order
+            tp_order = None
             try:
-                tp_order = self.exchange.create_order(
-                    symbol=pair,
-                    type='TAKE_PROFIT_MARKET',
-                    side='sell',
-                    amount=quantity,
-                    params={
-                        'stopPrice': tp_price,
-                        'closePosition': False,
-                        'reduceOnly': True,
-                    }
-                )
+                tp_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol,
+                    'side': 'SELL',
+                    'type': 'TAKE_PROFIT_MARKET',
+                    'stopPrice': tp_price,
+                    'quantity': quantity,
+                    'reduceOnly': 'true',
+                })
                 logger.info(f"{coin}: TP order placed @ {tp_price}")
             except Exception as e:
-                logger.warning(f"{coin}: TP order failed ({e}), will monitor manually")
-                tp_order = None
+                logger.warning(f"{coin}: TP order failed ({e})")
 
-            # 3. Stop Loss order (stop market sell)
+            # 3. Stop Loss order
+            sl_order = None
             try:
-                sl_order = self.exchange.create_order(
-                    symbol=pair,
-                    type='STOP_MARKET',
-                    side='sell',
-                    amount=quantity,
-                    params={
-                        'stopPrice': sl_price,
-                        'closePosition': False,
-                        'reduceOnly': True,
-                    }
-                )
+                sl_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol,
+                    'side': 'SELL',
+                    'type': 'STOP_MARKET',
+                    'stopPrice': sl_price,
+                    'quantity': quantity,
+                    'reduceOnly': 'true',
+                })
                 logger.info(f"{coin}: SL order placed @ {sl_price}")
             except Exception as e:
-                logger.warning(f"{coin}: SL order failed ({e}), will monitor manually")
-                sl_order = None
+                logger.warning(f"{coin}: SL order failed ({e})")
 
             return {
                 'coin': coin,
