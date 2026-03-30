@@ -1,0 +1,9 @@
+torch
+numpy
+pandas
+scikit-learn
+ccxt
+ta
+joblib
+websockets
+python-dotenv
