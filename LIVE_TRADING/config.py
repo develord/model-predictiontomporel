@@ -32,7 +32,7 @@ COINS = {
         'short_features': 'btc_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.60,
-        'short_conf': 0.52,
+        'short_conf': 0.58,   # V6: wide SL, 85.7% combined WR
         'data_start': '2017-01-01',
     },
     'ETH': {
@@ -45,7 +45,7 @@ COINS = {
         'short_features': 'eth_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.60,
-        'short_conf': 0.52,
+        'short_conf': 0.60,   # ETH SHORT: 58.1% WR @ 50%
         'data_start': '2018-01-01',
     },
     'SOL': {
@@ -58,7 +58,7 @@ COINS = {
         'short_features': 'sol_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.65,
-        'short_conf': 0.52,
+        'short_conf': 0.55,   # SOL SHORT: 85.7% WR @ 55%
         'data_start': '2020-08-01',
     },
     'DOGE': {
@@ -71,7 +71,7 @@ COINS = {
         'short_features': 'doge_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.59,
-        'short_conf': 0.52,
+        'short_conf': 0.55,   # DOGE SHORT: 60% WR
         'data_start': '2019-07-01',
     },
     'AVAX': {
@@ -84,7 +84,7 @@ COINS = {
         'short_features': 'avax_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.55,
-        'short_conf': 0.52,
+        'short_conf': 0.55,   # AVAX SHORT: 70% WR, +50.9%!
         'data_start': '2020-09-01',
     },
 }
