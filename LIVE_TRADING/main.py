@@ -90,60 +90,72 @@ class LiveTradingSystem:
             logger.info(f"{coin}: Already in position, skipping")
             return
 
-        # Check model is loaded
-        if coin not in self.signal_gen.models:
-            logger.warning(f"{coin}: No model loaded, skipping")
-            return
+        # Compute LONG features
+        long_feat_cols = self.signal_gen.long_features.get(coin, [])
+        long_scaler = self.signal_gen.long_scalers.get(coin)
 
-        # Compute features
-        feature_cols = self.signal_gen.feature_lists.get(coin, [])
-        scaler = self.signal_gen.scalers.get(coin)
-        if not feature_cols or scaler is None:
-            logger.warning(f"{coin}: Missing features/scaler")
-            return
+        raw_row = None
+        long_scaled = None
+        if long_feat_cols and long_scaler:
+            long_scaled, raw_row = compute_features(
+                self.data_mgr.buffers, coin, long_feat_cols, long_scaler, SEQUENCE_LENGTH
+            )
 
-        scaled_features, raw_row = compute_features(
-            self.data_mgr.buffers, coin, feature_cols, scaler, SEQUENCE_LENGTH
-        )
+        # Compute SHORT features
+        short_feat_cols = self.signal_gen.short_features.get(coin, [])
+        short_scaler = self.signal_gen.short_scalers.get(coin)
 
-        if scaled_features is None:
+        short_scaled = None
+        if short_feat_cols and short_scaler:
+            short_scaled, raw_row_s = compute_features(
+                self.data_mgr.buffers, coin, short_feat_cols, short_scaler, SEQUENCE_LENGTH
+            )
+            if raw_row is None:
+                raw_row = raw_row_s
+
+        if raw_row is None:
             logger.warning(f"{coin}: Feature computation failed")
             return
 
-        # Predict
-        direction, confidence = self.signal_gen.predict(coin, scaled_features)
-        if direction is None:
-            return
-
-        logger.info(f"{coin}: Prediction = {'LONG' if direction == 1 else 'SHORT'} | Confidence: {confidence:.1%}")
-
-        # Only trade LONG signals
-        if direction != 1:
-            logger.info(f"{coin}: SHORT signal, no trade")
-            return
-
-        # Apply filters
-        passes, reason = self.signal_gen.check_filters(coin, raw_row, confidence)
-        if not passes:
-            logger.info(f"{coin}: Filtered - {reason}")
-            return
-
-        # Calculate TP/SL
         current_price = self.executor.get_price(coin)
         if not current_price:
             return
 
-        tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price)
+        # Try LONG first
+        if long_scaled is not None and coin in self.signal_gen.long_models:
+            l_dir, l_conf = self.signal_gen.predict_long(coin, long_scaled)
+            if l_dir == 1:
+                logger.info(f"{coin}: LONG signal | Conf: {l_conf:.1%}")
+                passes, reason = self.signal_gen.check_long_filters(coin, raw_row, l_conf)
+                if passes:
+                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'LONG')
+                    logger.info(f"{coin}: LONG ACCEPTED | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
+                    order = self.executor.open_long(coin, tp_pct, sl_pct)
+                    if order:
+                        order['direction'] = 'LONG'
+                        self.pos_mgr.open_position(coin, order)
+                        return
+                else:
+                    logger.info(f"{coin}: LONG filtered - {reason}")
 
-        logger.info(f"{coin}: SIGNAL ACCEPTED | Conf: {confidence:.1%} | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
+        # Try SHORT if LONG didn't trigger
+        if short_scaled is not None and coin in self.signal_gen.short_models:
+            s_dir, s_conf = self.signal_gen.predict_short(coin, short_scaled)
+            if s_dir == 1:
+                logger.info(f"{coin}: SHORT signal | Conf: {s_conf:.1%}")
+                passes, reason = self.signal_gen.check_short_filters(coin, raw_row, s_conf)
+                if passes:
+                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'SHORT')
+                    logger.info(f"{coin}: SHORT ACCEPTED | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
+                    order = self.executor.open_short(coin, tp_pct, sl_pct)
+                    if order:
+                        order['direction'] = 'SHORT'
+                        self.pos_mgr.open_position(coin, order)
+                        return
+                else:
+                    logger.info(f"{coin}: SHORT filtered - {reason}")
 
-        # Execute trade
-        order_info = self.executor.open_long(coin, tp_pct, sl_pct)
-        if order_info:
-            self.pos_mgr.open_position(coin, order_info)
-            logger.info(f"{coin}: TRADE EXECUTED | Entry: {order_info['entry_price']}")
-        else:
-            logger.error(f"{coin}: Trade execution failed")
+        logger.info(f"{coin}: No trade signal")
 
     async def on_15m_candle_close(self, coin, candle):
         """Called on 15m candle close - check if position TP/SL hit (backup monitoring)"""

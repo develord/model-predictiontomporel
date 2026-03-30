@@ -183,6 +183,83 @@ class TradeExecutor:
             logger.error(f"{coin}: Order execution failed: {e}")
             return None
 
+    def open_short(self, coin, tp_pct, sl_pct):
+        """Open SHORT position with TP and SL orders. TP = price drops, SL = price rises."""
+        if not self.connected:
+            return None
+
+        pair = COINS[coin]['pair']
+        symbol = pair.replace('/', '')
+
+        try:
+            price = self.get_price(coin)
+            if not price:
+                return None
+
+            balance = self.get_balance()
+            position_value = balance * TRADING['position_size_pct']
+
+            exchange_info = self.exchange.fapiPublicGetExchangeInfo()
+            sym_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+
+            if sym_info:
+                qty_precision = int(sym_info.get('quantityPrecision', 3))
+                price_precision = int(sym_info.get('pricePrecision', 2))
+                min_qty = float(next((f['minQty'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), 0.001))
+            else:
+                qty_precision, price_precision, min_qty = 3, 2, 0.001
+
+            quantity = round(position_value / price, qty_precision)
+            if quantity < min_qty:
+                logger.warning(f"{coin}: Quantity below minimum")
+                return None
+
+            # SHORT: TP when price drops, SL when price rises
+            tp_price = round(price * (1 - tp_pct), price_precision)
+            sl_price = round(price * (1 + sl_pct), price_precision)
+
+            logger.info(f"{coin}: Opening SHORT | Price: {price} | Qty: {quantity} | TP: {tp_price} | SL: {sl_price}")
+
+            # Market SELL to open short
+            entry_order = self.exchange.fapiPrivatePostOrder({
+                'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity,
+            })
+            entry_price = float(entry_order.get('avgPrice', price))
+            logger.info(f"{coin}: SHORT entry filled @ {entry_price}")
+
+            # TP order (buy back at lower price)
+            tp_order = None
+            try:
+                tp_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol, 'side': 'BUY', 'type': 'TAKE_PROFIT_MARKET',
+                    'stopPrice': tp_price, 'quantity': quantity, 'reduceOnly': 'true',
+                })
+                logger.info(f"{coin}: SHORT TP @ {tp_price}")
+            except Exception as e:
+                logger.warning(f"{coin}: SHORT TP failed ({e})")
+
+            # SL order (buy back at higher price)
+            sl_order = None
+            try:
+                sl_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol, 'side': 'BUY', 'type': 'STOP_MARKET',
+                    'stopPrice': sl_price, 'quantity': quantity, 'reduceOnly': 'true',
+                })
+                logger.info(f"{coin}: SHORT SL @ {sl_price}")
+            except Exception as e:
+                logger.warning(f"{coin}: SHORT SL failed ({e})")
+
+            return {
+                'coin': coin, 'pair': pair, 'side': 'SHORT',
+                'entry_price': entry_price, 'quantity': quantity,
+                'tp_price': tp_price, 'sl_price': sl_price,
+                'tp_pct': tp_pct, 'sl_pct': sl_pct,
+            }
+
+        except Exception as e:
+            logger.error(f"{coin}: SHORT execution failed: {e}")
+            return None
+
     def close_position(self, coin, quantity):
         """Close position with market sell"""
         try:
