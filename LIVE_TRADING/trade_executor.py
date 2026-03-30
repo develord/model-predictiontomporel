@@ -154,15 +154,15 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: TP failed ({e})")
 
-            # 3. Stop Loss (STOP sell at SL price)
+            # 3. Stop Loss (LIMIT sell at SL price - demo API doesn't support STOP)
             sl_order = None
             try:
                 sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'SELL', 'type': 'STOP',
-                    'price': sl_price, 'stopPrice': sl_price,
-                    'quantity': quantity, 'timeInForce': 'GTC', 'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'SELL', 'type': 'LIMIT',
+                    'price': sl_price, 'quantity': quantity,
+                    'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: SL STOP @ {sl_price}")
+                logger.info(f"{coin}: SL LIMIT @ {sl_price}")
             except Exception as e:
                 logger.warning(f"{coin}: SL failed ({e})")
 
@@ -241,15 +241,15 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: SHORT TP failed ({e})")
 
-            # SL order (STOP buy back at higher price)
+            # SL order (LIMIT buy back at higher price - demo API doesn't support STOP)
             sl_order = None
             try:
                 sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'BUY', 'type': 'STOP',
-                    'price': sl_price, 'stopPrice': sl_price,
-                    'quantity': quantity, 'timeInForce': 'GTC', 'reduceOnly': 'true',
+                    'symbol': symbol, 'side': 'BUY', 'type': 'LIMIT',
+                    'price': sl_price, 'quantity': quantity,
+                    'timeInForce': 'GTC', 'reduceOnly': 'true',
                 })
-                logger.info(f"{coin}: SHORT SL STOP @ {sl_price}")
+                logger.info(f"{coin}: SHORT SL LIMIT @ {sl_price}")
             except Exception as e:
                 logger.warning(f"{coin}: SHORT SL failed ({e})")
 
