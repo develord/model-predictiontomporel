@@ -159,31 +159,41 @@ class LiveTradingSystem:
         logger.info(f"{coin}: No trade signal")
 
     async def on_15m_candle_close(self, coin, candle):
-        """Called on 15m candle close - check if position TP/SL hit (backup monitoring)"""
+        """Called on 15m candle close - monitor SL (exchange can't do STOP on demo)"""
         if not self.pos_mgr.has_position(coin):
             return
 
         pos = self.pos_mgr.positions[coin]
         high = candle['high']
         low = candle['low']
+        direction = pos.get('direction', pos.get('side', 'LONG'))
 
-        # Check if TP/SL was hit (backup - exchange orders should handle this)
-        if high >= pos['tp_price']:
-            logger.info(f"{coin}: TP hit detected on 15m candle (high={high}, tp={pos['tp_price']})")
-            # Exchange TP order should have triggered, but verify
-            positions = self.executor.get_open_positions()
-            pair_symbol = COINS[coin]['pair'].replace('/', '')
-            if pair_symbol not in positions or positions[pair_symbol]['contracts'] == 0:
-                self.pos_mgr.close_position(coin, 'TP', pos['tp_price'])
-                self.signal_gen.record_trade_result(coin, 'TP')
-
-        elif low <= pos['sl_price']:
-            logger.info(f"{coin}: SL hit detected on 15m candle (low={low}, sl={pos['sl_price']})")
-            positions = self.executor.get_open_positions()
-            pair_symbol = COINS[coin]['pair'].replace('/', '')
-            if pair_symbol not in positions or positions[pair_symbol]['contracts'] == 0:
+        if direction == 'LONG':
+            # LONG: TP when high >= tp_price, SL when low <= sl_price
+            if low <= pos['sl_price']:
+                logger.info(f"{coin}: LONG SL HIT (low={low} <= sl={pos['sl_price']})")
+                self.executor.close_position(coin, pos['quantity'], 'LONG')
+                self.executor.cancel_orders(coin)
                 self.pos_mgr.close_position(coin, 'SL', pos['sl_price'])
-                self.signal_gen.record_trade_result(coin, 'SL')
+                self.signal_gen.record_trade_result(coin, 'LONG', 'SL')
+            elif high >= pos['tp_price']:
+                logger.info(f"{coin}: LONG TP HIT (high={high} >= tp={pos['tp_price']})")
+                # TP order on exchange should have filled, verify
+                self.pos_mgr.close_position(coin, 'TP', pos['tp_price'])
+                self.signal_gen.record_trade_result(coin, 'LONG', 'TP')
+        else:
+            # SHORT: TP when low <= tp_price (price drops), SL when high >= sl_price (price rises)
+            if high >= pos['sl_price']:
+                logger.info(f"{coin}: SHORT SL HIT (high={high} >= sl={pos['sl_price']})")
+                self.executor.close_position(coin, pos['quantity'], 'SHORT')
+                self.executor.cancel_orders(coin)
+                self.pos_mgr.close_position(coin, 'SL', pos['sl_price'])
+                self.signal_gen.record_trade_result(coin, 'SHORT', 'SL')
+            elif low <= pos['tp_price']:
+                logger.info(f"{coin}: SHORT TP HIT (low={low} <= tp={pos['tp_price']})")
+                # TP order on exchange should have filled, verify
+                self.pos_mgr.close_position(coin, 'TP', pos['tp_price'])
+                self.signal_gen.record_trade_result(coin, 'SHORT', 'TP')
 
     async def check_positions_sync(self):
         """Periodically sync local state with exchange positions"""

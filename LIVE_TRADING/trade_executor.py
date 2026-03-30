@@ -154,17 +154,10 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: TP failed ({e})")
 
-            # 3. Stop Loss (LIMIT sell at SL price - demo API doesn't support STOP)
+            # 3. Stop Loss - monitored by WebSocket (demo API doesn't support STOP orders)
+            # LIMIT at SL price would execute immediately, so we skip it
             sl_order = None
-            try:
-                sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'SELL', 'type': 'LIMIT',
-                    'price': sl_price, 'quantity': quantity,
-                    'timeInForce': 'GTC', 'reduceOnly': 'true',
-                })
-                logger.info(f"{coin}: SL LIMIT @ {sl_price}")
-            except Exception as e:
-                logger.warning(f"{coin}: SL failed ({e})")
+            logger.info(f"{coin}: SL @ {sl_price} (monitored by system, not exchange order)")
 
             return {
                 'coin': coin,
@@ -241,17 +234,9 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: SHORT TP failed ({e})")
 
-            # SL order (LIMIT buy back at higher price - demo API doesn't support STOP)
+            # SL - monitored by WebSocket (demo API doesn't support STOP orders)
             sl_order = None
-            try:
-                sl_order = self.exchange.fapiPrivatePostOrder({
-                    'symbol': symbol, 'side': 'BUY', 'type': 'LIMIT',
-                    'price': sl_price, 'quantity': quantity,
-                    'timeInForce': 'GTC', 'reduceOnly': 'true',
-                })
-                logger.info(f"{coin}: SHORT SL LIMIT @ {sl_price}")
-            except Exception as e:
-                logger.warning(f"{coin}: SHORT SL failed ({e})")
+            logger.info(f"{coin}: SHORT SL @ {sl_price} (monitored by system)")
 
             return {
                 'coin': coin, 'pair': pair, 'side': 'SHORT',
@@ -264,18 +249,16 @@ class TradeExecutor:
             logger.error(f"{coin}: SHORT execution failed: {e}")
             return None
 
-    def close_position(self, coin, quantity):
-        """Close position with market sell"""
+    def close_position(self, coin, quantity, direction='LONG'):
+        """Close position - SELL to close LONG, BUY to close SHORT"""
         try:
-            pair = COINS[coin]['pair']
-            order = self.exchange.create_order(
-                symbol=pair,
-                type='market',
-                side='sell',
-                amount=quantity,
-                params={'reduceOnly': True}
-            )
-            logger.info(f"{coin}: Position closed @ {order.get('average', 'N/A')}")
+            symbol = COINS[coin]['pair'].replace('/', '')
+            side = 'SELL' if direction == 'LONG' else 'BUY'
+            order = self.exchange.fapiPrivatePostOrder({
+                'symbol': symbol, 'side': side, 'type': 'MARKET',
+                'quantity': quantity, 'reduceOnly': 'true',
+            })
+            logger.info(f"{coin}: Position closed ({side}) @ {order.get('avgPrice', 'N/A')}")
             return order
         except Exception as e:
             logger.error(f"{coin}: Close position failed: {e}")
