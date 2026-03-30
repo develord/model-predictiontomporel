@@ -43,11 +43,19 @@ class TradeExecutor:
                     elif 'api.binance.com' in url:
                         self.exchange.urls['api'][key] = url.replace('https://api.binance.com', demo)
 
+            # Set leverage to 1x for all coins
+            for coin_name, coin_cfg in COINS.items():
+                try:
+                    sym = coin_cfg['pair'].replace('/', '')
+                    self.exchange.fapiPrivatePostLeverage({'symbol': sym, 'leverage': TRADING['leverage']})
+                except:
+                    pass
+
             # Test connection - fetch balance directly
             balances = self.exchange.fapiPrivateV2GetBalance()
             usdt_bal = next((b for b in balances if b['asset'] == 'USDT'), None)
             usdt = float(usdt_bal['availableBalance']) if usdt_bal else 0
-            logger.info(f"Connected to Binance Demo Trading | USDT Balance: {usdt}")
+            logger.info(f"Connected to Binance Demo Trading | USDT Balance: {usdt} | Leverage: {TRADING['leverage']}x")
             self.connected = True
             return True
 
