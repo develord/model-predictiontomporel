@@ -65,6 +65,7 @@ class PositionManager:
         """Record a new open position"""
         self.positions[coin] = {
             'coin': coin,
+            'direction': order_info.get('direction', order_info.get('side', 'LONG')),
             'entry_price': order_info['entry_price'],
             'quantity': order_info['quantity'],
             'tp_price': order_info['tp_price'],

@@ -203,21 +203,25 @@ class LiveTradingSystem:
                 exchange_positions = self.executor.get_open_positions()
 
                 for coin in list(self.pos_mgr.positions.keys()):
-                    pair_symbol = COINS[coin]['pair'].replace('/', '')
-                    if pair_symbol not in exchange_positions or exchange_positions[pair_symbol]['contracts'] == 0:
-                        # Position was closed on exchange (TP/SL hit)
+                    pair_symbol = COINS[coin]['pair'].replace('/', '') + 'T'  # BTCUSDT format
+                    pair_no_t = COINS[coin]['pair'].replace('/', '')
+                    # Check both formats
+                    found = pair_symbol in exchange_positions or pair_no_t in exchange_positions
+                    if not found:
                         pos = self.pos_mgr.positions[coin]
+                        direction = pos.get('direction', 'LONG')
                         current_price = self.executor.get_price(coin)
-                        if current_price:
-                            if current_price >= pos['tp_price']:
-                                exit_type = 'TP'
-                            elif current_price <= pos['sl_price']:
-                                exit_type = 'SL'
-                            else:
-                                exit_type = 'CLOSED'
-                            self.pos_mgr.close_position(coin, exit_type, current_price)
-                            self.signal_gen.record_trade_result(coin, exit_type)
-                            logger.info(f"{coin}: Position sync - closed ({exit_type})")
+                        if current_price and current_price > 0:
+                            tp = pos.get('tp_price', 0)
+                            sl = pos.get('sl_price', 0)
+                            if tp > 0 and sl > 0:
+                                if direction == 'SHORT':
+                                    exit_type = 'TP' if current_price <= tp else ('SL' if current_price >= sl else 'CLOSED')
+                                else:
+                                    exit_type = 'TP' if current_price >= tp else ('SL' if current_price <= sl else 'CLOSED')
+                                self.pos_mgr.close_position(coin, exit_type, current_price)
+                                self.signal_gen.record_trade_result(coin, direction, exit_type)
+                                logger.info(f"{coin}: Sync - {direction} closed ({exit_type}) @ {current_price}")
 
             except Exception as e:
                 logger.error(f"Position sync error: {e}")

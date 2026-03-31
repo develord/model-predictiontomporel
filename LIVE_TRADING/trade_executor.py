@@ -139,7 +139,8 @@ class TradeExecutor:
                 'type': 'MARKET',
                 'quantity': quantity,
             })
-            entry_price = float(entry_order.get('avgPrice', price))
+            avg = float(entry_order.get('avgPrice', 0))
+            entry_price = avg if avg > 0 else price  # Demo returns 0, use market price
             logger.info(f"{coin}: Entry filled @ {entry_price}")
 
             # 2. Take Profit (LIMIT sell at TP price)
@@ -219,7 +220,8 @@ class TradeExecutor:
             entry_order = self.exchange.fapiPrivatePostOrder({
                 'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity,
             })
-            entry_price = float(entry_order.get('avgPrice', price))
+            avg = float(entry_order.get('avgPrice', 0))
+            entry_price = avg if avg > 0 else price  # Demo returns 0, use market price
             logger.info(f"{coin}: SHORT entry filled @ {entry_price}")
 
             # TP order (LIMIT buy back at lower price)
@@ -267,25 +269,26 @@ class TradeExecutor:
     def cancel_orders(self, coin):
         """Cancel all open orders for a coin"""
         try:
-            pair = COINS[coin]['pair']
-            self.exchange.cancel_all_orders(pair)
-            logger.info(f"{coin}: All open orders cancelled")
+            symbol = COINS[coin]['pair'].replace('/', '')
+            self.exchange.fapiPrivateDeleteAllOpenOrders({'symbol': symbol})
+            logger.info(f"{coin}: Orders cancelled")
         except Exception as e:
-            logger.warning(f"{coin}: Cancel orders failed: {e}")
+            logger.warning(f"{coin}: Cancel orders: {e}")
 
     def get_open_positions(self):
-        """Get all open positions"""
+        """Get all open positions from demo API"""
         try:
-            positions = self.exchange.fetch_positions()
+            positions = self.exchange.fapiPrivateV2GetPositionRisk()
             open_pos = {}
             for pos in positions:
-                if float(pos.get('contracts', 0)) > 0:
+                amt = float(pos.get('positionAmt', 0))
+                if amt != 0:
                     symbol = pos.get('symbol', '')
                     open_pos[symbol] = {
-                        'side': pos.get('side'),
-                        'contracts': float(pos.get('contracts', 0)),
+                        'side': 'SHORT' if amt < 0 else 'LONG',
+                        'contracts': abs(amt),
                         'entry_price': float(pos.get('entryPrice', 0)),
-                        'unrealized_pnl': float(pos.get('unrealizedPnl', 0)),
+                        'unrealized_pnl': float(pos.get('unRealizedProfit', 0)),
                     }
             return open_pos
         except Exception as e:
