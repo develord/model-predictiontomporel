@@ -8,8 +8,14 @@ TP/SL are placed as limit/stop orders on the exchange.
 import ccxt
 import logging
 import time
+import hmac
+import hashlib
+import requests
+from urllib.parse import urlencode
 
 from config import BINANCE_TESTNET_KEY, BINANCE_TESTNET_SECRET, TRADING, COINS
+
+DEMO_BASE_URL = 'https://demo-fapi.binance.com'
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +167,13 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: TP failed ({e})")
 
-            # 3. Stop Loss - monitored by WebSocket (demo API doesn't support STOP orders)
-            # LIMIT at SL price would execute immediately, so we skip it
+            # 3. Stop Loss via Algo Order API (STOP_MARKET)
             sl_order = None
-            logger.info(f"{coin}: SL @ {sl_price} (monitored by system, not exchange order)")
+            try:
+                sl_order = self._place_algo_order(symbol, 'SELL', 'STOP_MARKET', sl_price, quantity)
+                logger.info(f"{coin}: SL STOP_MARKET @ {sl_price} (Algo API)")
+            except Exception as e:
+                logger.warning(f"{coin}: SL failed ({e}), monitored by system")
 
             return {
                 'coin': coin,
@@ -242,9 +251,13 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: SHORT TP failed ({e})")
 
-            # SL - monitored by WebSocket (demo API doesn't support STOP orders)
+            # SL via Algo Order API (STOP_MARKET)
             sl_order = None
-            logger.info(f"{coin}: SHORT SL @ {sl_price} (monitored by system)")
+            try:
+                sl_order = self._place_algo_order(symbol, 'BUY', 'STOP_MARKET', sl_price, quantity)
+                logger.info(f"{coin}: SHORT SL STOP_MARKET @ {sl_price} (Algo API)")
+            except Exception as e:
+                logger.warning(f"{coin}: SHORT SL failed ({e}), monitored by system")
 
             return {
                 'coin': coin, 'pair': pair, 'side': 'SHORT',
@@ -256,6 +269,29 @@ class TradeExecutor:
         except Exception as e:
             logger.error(f"{coin}: SHORT execution failed: {e}")
             return None
+
+    def _place_algo_order(self, symbol, side, order_type, trigger_price, quantity):
+        """Place conditional order via Binance Algo Order API"""
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'type': order_type,
+            'algoType': 'CONDITIONAL',
+            'triggerPrice': str(trigger_price),
+            'quantity': str(quantity),
+            'timestamp': int(time.time() * 1000),
+            'recvWindow': 10000,
+        }
+        query = urlencode(params)
+        signature = hmac.new(BINANCE_TESTNET_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+        params['signature'] = signature
+        headers = {'X-MBX-APIKEY': BINANCE_TESTNET_KEY}
+
+        r = requests.post(f'{DEMO_BASE_URL}/fapi/v1/algoOrder', params=params, headers=headers)
+        if r.status_code == 200:
+            return r.json()
+        else:
+            raise Exception(f"Algo order failed: {r.text[:200]}")
 
     def close_position(self, coin, quantity, direction='LONG'):
         """Close position - SELL to close LONG, BUY to close SHORT"""
