@@ -203,10 +203,8 @@ class LiveTradingSystem:
                 exchange_positions = self.executor.get_open_positions()
 
                 for coin in list(self.pos_mgr.positions.keys()):
-                    pair_symbol = COINS[coin]['pair'].replace('/', '') + 'T'  # BTCUSDT format
-                    pair_no_t = COINS[coin]['pair'].replace('/', '')
-                    # Check both formats
-                    found = pair_symbol in exchange_positions or pair_no_t in exchange_positions
+                    pair_symbol = COINS[coin]['pair'].replace('/', '')  # BTC/USDT -> BTCUSDT
+                    found = pair_symbol in exchange_positions
                     if not found:
                         pos = self.pos_mgr.positions[coin]
                         direction = pos.get('direction', 'LONG')
