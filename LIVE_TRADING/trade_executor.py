@@ -14,6 +14,14 @@ from config import BINANCE_TESTNET_KEY, BINANCE_TESTNET_SECRET, TRADING, COINS
 logger = logging.getLogger(__name__)
 
 
+def round_to_tick(value, tick_size):
+    """Round price to nearest tick size"""
+    tick = float(tick_size)
+    if tick <= 0:
+        return value
+    return round(round(value / tick) * tick, 10)
+
+
 class TradeExecutor:
     def __init__(self):
         self.exchange = None
@@ -113,22 +121,20 @@ class TradeExecutor:
 
             if sym_info:
                 qty_precision = int(sym_info.get('quantityPrecision', 3))
-                price_precision = int(sym_info.get('pricePrecision', 2))
+                tick_size = next((f['tickSize'] for f in sym_info.get('filters', []) if f['filterType'] == 'PRICE_FILTER'), '0.01')
+                step_size = next((f['stepSize'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), '0.001')
                 min_qty = float(next((f['minQty'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), 0.001))
             else:
-                qty_precision = 3
-                price_precision = 2
-                min_qty = 0.001
-            precision = qty_precision
+                qty_precision, tick_size, step_size, min_qty = 3, '0.01', '0.001', 0.001
 
-            quantity = round(position_value / price, precision)
+            quantity = round_to_tick(position_value / price, step_size)
             if quantity < min_qty:
                 logger.warning(f"{coin}: Quantity {quantity} below minimum {min_qty}")
                 return None
 
-            # TP/SL prices
-            tp_price = round(price * (1 + tp_pct), price_precision)
-            sl_price = round(price * (1 - sl_pct), price_precision)
+            # TP/SL prices aligned to tick size
+            tp_price = round_to_tick(price * (1 + tp_pct), tick_size)
+            sl_price = round_to_tick(price * (1 - sl_pct), tick_size)
 
             logger.info(f"{coin}: Opening LONG | Price: {price} | Qty: {quantity} | TP: {tp_price} | SL: {sl_price}")
 
@@ -199,20 +205,20 @@ class TradeExecutor:
             sym_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
 
             if sym_info:
-                qty_precision = int(sym_info.get('quantityPrecision', 3))
-                price_precision = int(sym_info.get('pricePrecision', 2))
+                tick_size = next((f['tickSize'] for f in sym_info.get('filters', []) if f['filterType'] == 'PRICE_FILTER'), '0.01')
+                step_size = next((f['stepSize'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), '0.001')
                 min_qty = float(next((f['minQty'] for f in sym_info.get('filters', []) if f['filterType'] == 'LOT_SIZE'), 0.001))
             else:
-                qty_precision, price_precision, min_qty = 3, 2, 0.001
+                tick_size, step_size, min_qty = '0.01', '0.001', 0.001
 
-            quantity = round(position_value / price, qty_precision)
+            quantity = round_to_tick(position_value / price, step_size)
             if quantity < min_qty:
                 logger.warning(f"{coin}: Quantity below minimum")
                 return None
 
-            # SHORT: TP when price drops, SL when price rises
-            tp_price = round(price * (1 - tp_pct), price_precision)
-            sl_price = round(price * (1 + sl_pct), price_precision)
+            # SHORT: TP when price drops, SL when price rises (aligned to tick)
+            tp_price = round_to_tick(price * (1 - tp_pct), tick_size)
+            sl_price = round_to_tick(price * (1 + sl_pct), tick_size)
 
             logger.info(f"{coin}: Opening SHORT | Price: {price} | Qty: {quantity} | TP: {tp_price} | SL: {sl_price}")
 
