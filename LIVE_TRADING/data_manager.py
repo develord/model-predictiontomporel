@@ -144,6 +144,13 @@ class DataManager:
                                     logger.info(f"{coin} 1D candle closed @ {candle['close']}")
                                     await self.on_daily_close(coin)
 
+                                # Double check: 4h candle at 08:00 UTC triggers second prediction
+                                if tf == '4h' and self.on_daily_close:
+                                    hour = candle['date'].hour if hasattr(candle['date'], 'hour') else 0
+                                    if hour == 8:
+                                        logger.info(f"{coin} 4H 08:00 UTC double-check @ {candle['close']}")
+                                        await self.on_daily_close(coin)
+
                                 if tf == '15m' and self.on_15m_close:
                                     await self.on_15m_close(coin, candle)
 
