@@ -138,6 +138,10 @@ class DataManager:
                             # Always update current candle
                             self._update_buffer(coin, tf, candle)
 
+                            # Real-time trailing stop check on every 15m tick (not just close)
+                            if tf == '15m' and self.on_15m_close:
+                                await self.on_15m_close(coin, candle)
+
                             # On candle close
                             if is_closed:
                                 if tf == '1d' and self.on_daily_close:
