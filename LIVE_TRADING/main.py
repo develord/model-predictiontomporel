@@ -159,40 +159,130 @@ class LiveTradingSystem:
         logger.info(f"{coin}: No trade signal")
 
     async def on_15m_candle_close(self, coin, candle):
-        """Called on 15m candle close - monitor SL (exchange can't do STOP on demo)"""
+        """Called on 15m candle close - trailing stop + TP/SL monitoring"""
         if not self.pos_mgr.has_position(coin):
             return
 
         pos = self.pos_mgr.positions[coin]
         high = candle['high']
         low = candle['low']
+        close = candle['close']
         direction = pos.get('direction', pos.get('side', 'LONG'))
+        entry = pos.get('entry_price', 0)
+        tp_price = pos.get('tp_price', 0)
+        sl_price = pos.get('sl_price', 0)
+
+        if entry <= 0:
+            return
+
+        # Calculate current PnL %
+        if direction == 'LONG':
+            current_pnl_pct = (close / entry - 1) * 100
+            tp_total_pct = (tp_price / entry - 1) * 100 if tp_price > 0 else 0
+        else:
+            current_pnl_pct = (entry / close - 1) * 100
+            tp_total_pct = (entry / tp_price - 1) * 100 if tp_price > 0 else 0
+
+        # ====== TRAILING STOP LOGIC ======
+
+        # 1. Close at 90% of TP target
+        if tp_total_pct > 0 and current_pnl_pct >= tp_total_pct * 0.90:
+            logger.info(f"{coin}: PROXIMITY CLOSE | PnL: {current_pnl_pct:+.2f}% (90% of TP {tp_total_pct:.1f}%)")
+            self.executor.close_position(coin, pos['quantity'], direction)
+            self.executor.cancel_orders(coin)
+            self.pos_mgr.close_position(coin, 'TP_TRAIL', close)
+            self.signal_gen.record_trade_result(coin, direction, 'TP')
+            return
+
+        # 2. Trailing SL adjustments
+        new_sl = sl_price
+        trail_reason = None
+
+        if current_pnl_pct >= 3.0:
+            # Lock +2% profit
+            if direction == 'LONG':
+                new_sl = max(sl_price, entry * 1.02)
+            else:
+                new_sl = min(sl_price, entry * 0.98)
+            trail_reason = "trail_3pct_lock_2pct"
+
+        elif current_pnl_pct >= 2.5:
+            # Lock +1% profit
+            if direction == 'LONG':
+                new_sl = max(sl_price, entry * 1.01)
+            else:
+                new_sl = min(sl_price, entry * 0.99)
+            trail_reason = "trail_2.5pct_lock_1pct"
+
+        elif current_pnl_pct >= 1.5:
+            # Move to breakeven
+            if direction == 'LONG':
+                new_sl = max(sl_price, entry)
+            else:
+                new_sl = min(sl_price, entry)
+            trail_reason = "trail_1.5pct_breakeven"
+
+        # Apply trailing SL if changed
+        if trail_reason:
+            sl_changed = (direction == 'LONG' and new_sl > sl_price) or \
+                         (direction == 'SHORT' and new_sl < sl_price)
+            if sl_changed:
+                logger.info(f"{coin}: TRAILING STOP | {trail_reason} | PnL: {current_pnl_pct:+.2f}% | SL: {sl_price:.4f} -> {new_sl:.4f}")
+                # Cancel old SL and place new one
+                self.executor.cancel_orders(coin)
+                # Re-place TP
+                from trade_executor import round_to_tick
+                try:
+                    info = self.executor.exchange.fapiPublicGetExchangeInfo()
+                    sym = COINS[coin]['pair'].replace('/', '')
+                    si = next((s for s in info['symbols'] if s['symbol'] == sym), None)
+                    tick = next((f['tickSize'] for f in si['filters'] if f['filterType'] == 'PRICE_FILTER'), '0.01') if si else '0.01'
+                    new_sl_rounded = round_to_tick(new_sl, tick)
+                    tp_rounded = round_to_tick(tp_price, tick)
+
+                    # Place new TP LIMIT
+                    tp_side = 'SELL' if direction == 'LONG' else 'BUY'
+                    self.executor.exchange.fapiPrivatePostOrder({
+                        'symbol': sym, 'side': tp_side, 'type': 'LIMIT',
+                        'price': tp_rounded, 'quantity': pos['quantity'],
+                        'timeInForce': 'GTC', 'reduceOnly': 'true',
+                    })
+
+                    # Place new SL via Algo API
+                    sl_side = 'SELL' if direction == 'LONG' else 'BUY'
+                    self.executor._place_algo_order(sym, sl_side, 'STOP_MARKET', new_sl_rounded, pos['quantity'])
+
+                    # Update local state
+                    pos['sl_price'] = new_sl_rounded
+                    self.pos_mgr._save_state()
+                    logger.info(f"{coin}: New SL @ {new_sl_rounded} + TP @ {tp_rounded} placed")
+
+                except Exception as e:
+                    logger.error(f"{coin}: Trailing stop update failed: {e}")
+
+        # ====== SL/TP HIT CHECK (backup) ======
 
         if direction == 'LONG':
-            # LONG: TP when high >= tp_price, SL when low <= sl_price
-            if low <= pos['sl_price']:
-                logger.info(f"{coin}: LONG SL HIT (low={low} <= sl={pos['sl_price']})")
+            if low <= sl_price:
+                logger.info(f"{coin}: LONG SL HIT (low={low} <= sl={sl_price})")
                 self.executor.close_position(coin, pos['quantity'], 'LONG')
                 self.executor.cancel_orders(coin)
-                self.pos_mgr.close_position(coin, 'SL', pos['sl_price'])
+                self.pos_mgr.close_position(coin, 'SL', sl_price)
                 self.signal_gen.record_trade_result(coin, 'LONG', 'SL')
-            elif high >= pos['tp_price']:
-                logger.info(f"{coin}: LONG TP HIT (high={high} >= tp={pos['tp_price']})")
-                # TP order on exchange should have filled, verify
-                self.pos_mgr.close_position(coin, 'TP', pos['tp_price'])
+            elif high >= tp_price:
+                logger.info(f"{coin}: LONG TP HIT")
+                self.pos_mgr.close_position(coin, 'TP', tp_price)
                 self.signal_gen.record_trade_result(coin, 'LONG', 'TP')
         else:
-            # SHORT: TP when low <= tp_price (price drops), SL when high >= sl_price (price rises)
-            if high >= pos['sl_price']:
-                logger.info(f"{coin}: SHORT SL HIT (high={high} >= sl={pos['sl_price']})")
+            if high >= sl_price:
+                logger.info(f"{coin}: SHORT SL HIT (high={high} >= sl={sl_price})")
                 self.executor.close_position(coin, pos['quantity'], 'SHORT')
                 self.executor.cancel_orders(coin)
-                self.pos_mgr.close_position(coin, 'SL', pos['sl_price'])
+                self.pos_mgr.close_position(coin, 'SL', sl_price)
                 self.signal_gen.record_trade_result(coin, 'SHORT', 'SL')
-            elif low <= pos['tp_price']:
-                logger.info(f"{coin}: SHORT TP HIT (low={low} <= tp={pos['tp_price']})")
-                # TP order on exchange should have filled, verify
-                self.pos_mgr.close_position(coin, 'TP', pos['tp_price'])
+            elif low <= tp_price:
+                logger.info(f"{coin}: SHORT TP HIT")
+                self.pos_mgr.close_position(coin, 'TP', tp_price)
                 self.signal_gen.record_trade_result(coin, 'SHORT', 'TP')
 
     async def check_positions_sync(self):
