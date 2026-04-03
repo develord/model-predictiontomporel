@@ -271,7 +271,7 @@ class TradeExecutor:
             return None
 
     def _place_algo_order(self, symbol, side, order_type, trigger_price, quantity):
-        """Place conditional order via Binance Algo Order API"""
+        """Place conditional order via Binance Algo Order API with reduceOnly"""
         params = {
             'symbol': symbol,
             'side': side,
@@ -279,6 +279,7 @@ class TradeExecutor:
             'algoType': 'CONDITIONAL',
             'triggerPrice': str(trigger_price),
             'quantity': str(quantity),
+            'reduceOnly': 'true',
             'timestamp': int(time.time() * 1000),
             'recvWindow': 10000,
         }

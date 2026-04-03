@@ -180,11 +180,12 @@ class LiveTradingSystem:
         last_trail = pos.get('_last_trail_check', 0)
         now = time.time()
         if now - last_trail < 60:
-            # Still check TP/SL hit (critical) but skip trailing logic
             pass_trailing = True
         else:
             pass_trailing = False
             pos['_last_trail_check'] = now
+            if current_pnl_pct > 1.0:
+                logger.info(f"{coin}: Trail check | {direction} | PnL: {current_pnl_pct:+.2f}% | SL: {sl_price}")
 
         # Calculate current PnL %
         if direction == 'LONG':
