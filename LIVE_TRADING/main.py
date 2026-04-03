@@ -175,6 +175,14 @@ class LiveTradingSystem:
         if entry <= 0:
             return
 
+        # Calculate current PnL %
+        if direction == 'LONG':
+            current_pnl_pct = (close / entry - 1) * 100
+            tp_total_pct = (tp_price / entry - 1) * 100 if tp_price > 0 else 0
+        else:
+            current_pnl_pct = (entry / close - 1) * 100
+            tp_total_pct = (entry / tp_price - 1) * 100 if tp_price > 0 else 0
+
         # Cooldown: don't update trailing stop more than once per minute
         import time
         last_trail = pos.get('_last_trail_check', 0)
@@ -186,14 +194,6 @@ class LiveTradingSystem:
             pos['_last_trail_check'] = now
             if current_pnl_pct > 1.0:
                 logger.info(f"{coin}: Trail check | {direction} | PnL: {current_pnl_pct:+.2f}% | SL: {sl_price}")
-
-        # Calculate current PnL %
-        if direction == 'LONG':
-            current_pnl_pct = (close / entry - 1) * 100
-            tp_total_pct = (tp_price / entry - 1) * 100 if tp_price > 0 else 0
-        else:
-            current_pnl_pct = (entry / close - 1) * 100
-            tp_total_pct = (entry / tp_price - 1) * 100 if tp_price > 0 else 0
 
         # ====== TRAILING STOP LOGIC (every ~60s) ======
         if not pass_trailing:
