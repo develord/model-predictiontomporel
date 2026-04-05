@@ -78,7 +78,86 @@ class LiveTradingSystem:
         logger.info(f"Balance: ${self.executor.get_balance():.2f}")
         logger.info(f"{self.pos_mgr.get_summary()}")
 
+        # Resync TP/SL orders for existing positions
+        self._resync_orders()
+
         return True
+
+    def _resync_orders(self):
+        """Ensure TP/SL orders exist on Binance for all open positions"""
+        if not self.pos_mgr.positions:
+            return
+
+        logger.info("\n[SYNC] Checking TP/SL orders for open positions...")
+
+        for coin, pos in self.pos_mgr.positions.items():
+            try:
+                symbol = COINS[coin]['pair'].replace('/', '')
+                direction = pos.get('direction', 'LONG')
+                tp_price = pos.get('tp_price', 0)
+                sl_price = pos.get('sl_price', 0)
+                quantity = pos.get('quantity', 0)
+
+                if tp_price <= 0 or sl_price <= 0 or quantity <= 0:
+                    continue
+
+                # Check existing orders for this symbol
+                try:
+                    open_orders = self.executor.exchange.fapiPrivateGetOpenOrders({'symbol': symbol})
+                except:
+                    open_orders = []
+
+                tp_side = 'SELL' if direction == 'LONG' else 'BUY'
+                has_tp = any(o.get('type') == 'LIMIT' and o.get('side') == tp_side for o in open_orders)
+
+                # Check algo orders for SL
+                has_sl = False
+                try:
+                    import requests as req
+                    import hmac, hashlib, time
+                    from config import BINANCE_TESTNET_KEY, BINANCE_TESTNET_SECRET
+                    params = {
+                        'symbol': symbol,
+                        'timestamp': int(time.time() * 1000),
+                        'recvWindow': 10000,
+                    }
+                    qs = '&'.join(f'{k}={v}' for k, v in params.items())
+                    sig = hmac.new(BINANCE_TESTNET_SECRET.encode(), qs.encode(), hashlib.sha256).hexdigest()
+                    params['signature'] = sig
+                    headers = {'X-MBX-APIKEY': BINANCE_TESTNET_KEY}
+                    r = req.get('https://demo-fapi.binance.com/fapi/v1/openAlgoOrders', params=params, headers=headers)
+                    if r.status_code == 200:
+                        algos = r.json() if isinstance(r.json(), list) else r.json().get('orders', [])
+                        sl_side = 'SELL' if direction == 'LONG' else 'BUY'
+                        has_sl = any(a.get('symbol') == symbol and a.get('side') == sl_side and a.get('algoStatus') == 'NEW' for a in algos)
+                except:
+                    pass
+
+                # Recreate missing orders
+                if not has_tp:
+                    try:
+                        self.executor.exchange.fapiPrivatePostOrder({
+                            'symbol': symbol, 'side': tp_side, 'type': 'LIMIT',
+                            'price': tp_price, 'quantity': quantity,
+                            'timeInForce': 'GTC', 'reduceOnly': 'true',
+                        })
+                        logger.info(f"[SYNC] {coin}: TP recreated @ {tp_price}")
+                    except Exception as e:
+                        logger.warning(f"[SYNC] {coin}: TP recreate failed: {e}")
+
+                if not has_sl:
+                    try:
+                        sl_side = 'SELL' if direction == 'LONG' else 'BUY'
+                        self.executor._place_algo_order(symbol, sl_side, 'STOP_MARKET', sl_price, quantity)
+                        logger.info(f"[SYNC] {coin}: SL recreated @ {sl_price}")
+                    except Exception as e:
+                        logger.warning(f"[SYNC] {coin}: SL recreate failed: {e}")
+
+                if has_tp and has_sl:
+                    logger.info(f"[SYNC] {coin}: TP/SL OK")
+
+            except Exception as e:
+                logger.error(f"[SYNC] {coin}: Error: {e}")
 
     async def on_daily_candle_close(self, coin):
         """Called when a 1d candle closes - generate signal and trade"""

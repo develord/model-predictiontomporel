@@ -21,7 +21,7 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CRYPTO = 'XRP'
-TIMEFRAMES = ['1h', '4h', '1d', '1w']
+TIMEFRAMES = ['15m', '1h', '4h', '1d', '1w']
 START_DATE = '2018-01-01'
 
 

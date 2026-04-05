@@ -45,15 +45,15 @@ TP_PCT = 0.015
 SL_PCT = 0.0075
 
 # Thresholds (per direction)
-LONG_CONF = 0.60
-SHORT_CONF = 0.52  # V2 model is more conservative, lower threshold needed
+LONG_CONF = 0.55
+SHORT_CONF = 0.68  # Very high - only strongest short signals
 
 # Filters
 MAX_CONSEC_LOSSES = 2
 COOLDOWN_DAYS = 5
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-03-24'
+BACKTEST_END = '2026-04-03'
 
 
 def load_model(model_dir, model_file):
@@ -78,11 +78,16 @@ def load_model(model_dir, model_file):
 
 
 def fetch_15min():
-    cache = DATA_DIR / 'xrp_15min_q1_2026.csv'
-    if cache.exists():
-        df = pd.read_csv(cache, parse_dates=['timestamp'])
-        df.set_index('timestamp', inplace=True)
+    # Use pre-downloaded 15m data
+    full = DATA_DIR / 'xrp_15m_data.csv'
+    if full.exists():
+        df = pd.read_csv(full)
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        df = df[(df.index >= BACKTEST_START) & (df.index <= BACKTEST_END)]
+        logger.info(f"Loaded {len(df)} 15min candles for backtest")
         return df
+    # Fallback: download from API
     ex = ccxt.binance({'enableRateLimit': True})
     s = int(pd.Timestamp(BACKTEST_START).timestamp() * 1000)
     e = int(pd.Timestamp(BACKTEST_END).timestamp() * 1000)
@@ -96,8 +101,6 @@ def fetch_15min():
     df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-    df = df[(df.index >= BACKTEST_START) & (df.index < BACKTEST_END)]
-    df.to_csv(cache)
     return df
 
 
@@ -153,10 +156,10 @@ def check_long_filters(row, consec, cool, date):
         return False, "weak_momentum"
     # Bear market
     if 'distance_from_sma50' in row.index and pd.notna(row['distance_from_sma50']):
-        if row['distance_from_sma50'] < -0.05:
+        if row['distance_from_sma50'] < -0.12:
             return False, "bear_sma50"
     if 'distance_from_sma20' in row.index and pd.notna(row['distance_from_sma20']):
-        if row['distance_from_sma20'] < -0.02:
+        if row['distance_from_sma20'] < -0.05:
             return False, "bear_sma20"
     # Volatility
     if 'volatility_regime' in row.index and pd.notna(row['volatility_regime']):
@@ -387,7 +390,7 @@ def backtest():
         logger.info(f"  Return: {ret:+.2f}%")
         logger.info(f"  Capital: $1000 -> ${capital:.2f}")
 
-        tdf.to_csv(RESULTS_DIR / 'btc_independent_backtest.csv', index=False)
+        tdf.to_csv(RESULTS_DIR / 'xrp_independent_backtest.csv', index=False)
     else:
         logger.info("No trades")
 

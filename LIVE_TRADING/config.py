@@ -32,7 +32,7 @@ COINS = {
         'short_features': 'btc_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.60,
-        'short_conf': 0.58,   # V6: wide SL, 85.7% combined WR
+        'short_conf': 0.55,   # Backtest original optimized
         'data_start': '2017-01-01',
     },
     'ETH': {
@@ -45,7 +45,7 @@ COINS = {
         'short_features': 'eth_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.60,
-        'short_conf': 0.60,   # ETH SHORT: 58.1% WR @ 50%
+        'short_conf': 0.55,   # Backtest original optimized
         'data_start': '2018-01-01',
     },
     'SOL': {
@@ -57,8 +57,8 @@ COINS = {
         'long_features': 'sol_features.json',
         'short_features': 'sol_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.65,
-        'short_conf': 0.55,   # SOL SHORT: 85.7% WR @ 55%
+        'long_conf': 0.60,
+        'short_conf': 0.55,   # Backtest original optimized
         'data_start': '2020-08-01',
     },
     'DOGE': {
@@ -70,8 +70,8 @@ COINS = {
         'long_features': 'doge_features.json',
         'short_features': 'doge_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.59,
-        'short_conf': 0.55,   # DOGE SHORT: 60% WR
+        'long_conf': 0.60,
+        'short_conf': 0.55,   # Backtest original optimized
         'data_start': '2019-07-01',
     },
     'AVAX': {
@@ -83,9 +83,69 @@ COINS = {
         'long_features': 'avax_features.json',
         'short_features': 'avax_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,
-        'short_conf': 0.55,   # AVAX SHORT: 70% WR, +50.9%!
+        'long_conf': 0.60,
+        'short_conf': 0.55,   # Backtest original optimized
         'data_start': '2020-09-01',
+    },
+    'XRP': {
+        'pair': 'XRP/USDT',
+        'long_model': 'xrp_cnn_model.pt',
+        'short_model': 'xrp_short_cnn_model.pt',
+        'long_scaler': 'xrp_feature_scaler.joblib',
+        'short_scaler': 'xrp_short_feature_scaler.joblib',
+        'long_features': 'xrp_features.json',
+        'short_features': 'xrp_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.55,
+        'short_conf': 0.68,   # Backtest original: très sélectif SHORT
+        'bear_sma50': -0.12,  # Per-coin override (backtest original)
+        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'data_start': '2018-01-01',
+    },
+    'LINK': {
+        'pair': 'LINK/USDT',
+        'long_model': 'link_cnn_model.pt',
+        'short_model': 'link_short_cnn_model.pt',
+        'long_scaler': 'link_feature_scaler.joblib',
+        'short_scaler': 'link_short_feature_scaler.joblib',
+        'long_features': 'link_features.json',
+        'short_features': 'link_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.85,    # Backtest original: très sélectif LONG
+        'short_conf': 0.55,   # Backtest original optimized
+        'bear_sma50': -0.12,  # Per-coin override (backtest original)
+        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'data_start': '2017-12-01',
+    },
+    'ADA': {
+        'pair': 'ADA/USDT',
+        'long_model': 'ada_cnn_model.pt',
+        'short_model': 'ada_short_cnn_model.pt',
+        'long_scaler': 'ada_feature_scaler.joblib',
+        'short_scaler': 'ada_short_feature_scaler.joblib',
+        'long_features': 'ada_features.json',
+        'short_features': 'ada_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.65,
+        'short_conf': 0.55,   # Backtest original optimized
+        'bear_sma50': -0.12,  # Per-coin override (backtest original)
+        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'data_start': '2018-04-01',
+    },
+    'NEAR': {
+        'pair': 'NEAR/USDT',
+        'long_model': 'near_cnn_model.pt',
+        'short_model': 'near_short_cnn_model.pt',
+        'long_scaler': 'near_feature_scaler.joblib',
+        'short_scaler': 'near_short_feature_scaler.joblib',
+        'long_features': 'near_features.json',
+        'short_features': 'near_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.70,
+        'short_conf': 0.52,   # Backtest original optimized
+        'bear_sma50': -0.12,  # Per-coin override (backtest original)
+        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'data_start': '2020-10-01',
     },
 }
 
@@ -93,7 +153,7 @@ COINS = {
 TRADING = {
     'tp_pct': 0.015,
     'sl_pct': 0.0075,
-    'position_size_pct': 0.18,     # 18% per coin (5 coins = 90% max exposure)
+    'position_size_pct': 0.10,     # 10% per coin (9 coins = 90% max exposure)
     'trading_fee': 0.001,
     'slippage': 0.0005,
     'use_dynamic_tp_sl': True,
@@ -108,8 +168,8 @@ FILTERS = {
     'min_momentum_alignment': 1,    # At least 1/3 TFs bullish
     'max_volatility_regime': 2.5,
     'min_adx': 15,
-    'bear_sma50_threshold': -0.05,  # -5% below SMA50
-    'bear_sma20_threshold': -0.03,  # -3% below SMA20
+    'bear_sma50_threshold': -0.05,  # -5% below SMA50 (default)
+    'bear_sma20_threshold': -0.02,  # -2% below SMA20 (backtest original)
     'max_trend_score': -3,          # Block if trend_score below this
 }
 

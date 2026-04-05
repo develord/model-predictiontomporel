@@ -138,12 +138,16 @@ class SignalGenerator:
         if total > 0 and bull < 1:
             return False, "weak_momentum"
 
+        # Per-coin SMA overrides, fallback to global FILTERS
+        sma50_thresh = cfg.get('bear_sma50', f['bear_sma50_threshold'])
+        sma20_thresh = cfg.get('bear_sma20', f['bear_sma20_threshold'])
+
         if 'distance_from_sma50' in raw_row.index and pd.notna(raw_row['distance_from_sma50']):
-            if raw_row['distance_from_sma50'] < f['bear_sma50_threshold']:
+            if raw_row['distance_from_sma50'] < sma50_thresh:
                 return False, "bear_sma50"
 
         if 'distance_from_sma20' in raw_row.index and pd.notna(raw_row['distance_from_sma20']):
-            if raw_row['distance_from_sma20'] < f['bear_sma20_threshold']:
+            if raw_row['distance_from_sma20'] < sma20_thresh:
                 return False, "bear_sma20"
 
         if 'volatility_regime' in raw_row.index and pd.notna(raw_row['volatility_regime']):
