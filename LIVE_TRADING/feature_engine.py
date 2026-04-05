@@ -131,6 +131,118 @@ def create_non_technical_features(df):
     return df
 
 
+def create_market_regime_features(df):
+    """Market regime features: bull/bear/range detection, support/resistance, phase.
+    Matches BTC_PRODUCTION/02_feature_engineering.py exactly."""
+    sma_50 = df['close'].rolling(50).mean()
+    sma_200 = df['close'].rolling(200).mean()
+    df['sma_50'] = sma_50
+    df['sma_200'] = sma_200
+    df['sma50_above_sma200'] = (sma_50 > sma_200).astype(int)
+    df['sma_spread_pct'] = (sma_50 / sma_200 - 1) * 100
+
+    ema_20 = df['close'].rolling(20).mean()
+    slope_20 = ema_20.pct_change(5) * 100
+    df['regime_slope'] = slope_20
+    df['regime_bull'] = ((slope_20 > 0.5) & (df['close'] > sma_50)).astype(int)
+    df['regime_bear'] = ((slope_20 < -0.5) & (df['close'] < sma_50)).astype(int)
+    df['regime_range'] = ((slope_20.abs() <= 0.5)).astype(int)
+
+    high_20 = df['high'].rolling(20).max()
+    low_20 = df['low'].rolling(20).min()
+    df['resistance_dist_pct'] = (high_20 / df['close'] - 1) * 100
+    df['support_dist_pct'] = (1 - low_20 / df['close']) * 100
+    df['sr_range_pct'] = (high_20 - low_20) / df['close'] * 100
+
+    high_50 = df['high'].rolling(50).max()
+    low_50 = df['low'].rolling(50).min()
+    df['resistance_50_dist_pct'] = (high_50 / df['close'] - 1) * 100
+    df['support_50_dist_pct'] = (1 - low_50 / df['close']) * 100
+
+    vol_trend = df['volume'].rolling(10).mean() / df['volume'].rolling(30).mean()
+    price_pos = (df['close'] - low_20) / (high_20 - low_20 + 1e-10)
+    df['volume_trend_ratio'] = vol_trend
+    df['price_position_in_range'] = price_pos
+
+    df['accumulation_score'] = (
+        (df['regime_range'] == 1).astype(float) *
+        (vol_trend > 1).astype(float) *
+        (price_pos < 0.3).astype(float)
+    )
+    df['distribution_score'] = (
+        (df['regime_range'] == 1).astype(float) *
+        (vol_trend > 1).astype(float) *
+        (price_pos > 0.7).astype(float)
+    )
+
+    sma_cross = (sma_50 > sma_200).astype(int).diff()
+    df['golden_cross_5d'] = sma_cross.rolling(5).sum().clip(0, 1)
+    df['death_cross_5d'] = (-sma_cross).rolling(5).sum().clip(0, 1)
+
+    rsi = df['1d_rsi_14'] if '1d_rsi_14' in df.columns else ta.momentum.RSIIndicator(df['close'], 14).rsi()
+    df['rsi_regime_shift'] = rsi.diff(5)
+
+    returns = df['close'].pct_change()
+    vol_weighted_return = (returns * df['volume']).rolling(10).sum() / df['volume'].rolling(10).sum()
+    df['vwap_trend_10'] = vol_weighted_return * 100
+
+    df['buying_pressure'] = ((df['close'] - df['low']) / (df['high'] - df['low'] + 1e-10))
+    df['selling_pressure'] = ((df['high'] - df['close']) / (df['high'] - df['low'] + 1e-10))
+    df['pressure_ratio'] = df['buying_pressure'] / (df['selling_pressure'] + 1e-10)
+
+    df['trend_consistency_10'] = returns.rolling(10).apply(lambda x: (x > 0).sum() / len(x), raw=True)
+    df['trend_consistency_20'] = returns.rolling(20).apply(lambda x: (x > 0).sum() / len(x), raw=True)
+
+    # is_strong_bear for bear sample weighting context
+    sma50_val = df['close'].rolling(50).mean()
+    sma_dist = df['close'] / sma50_val - 1
+    rsi_val = df['1d_rsi_14'] if '1d_rsi_14' in df.columns else ta.momentum.RSIIndicator(df['close'], 14).rsi()
+    df['is_strong_bear'] = ((sma_dist < -0.10) | ((rsi_val < 30) & (sma_dist < -0.05))).astype(int)
+
+    return df
+
+
+def add_bear_features(df):
+    """Bear-specific features for SHORT model.
+    Matches BTC_PRODUCTION/03_train_short_model.py exactly."""
+    for w in [10, 20, 50]:
+        sma = df['close'].rolling(w).mean()
+        df[f'price_above_sma{w}_pct'] = (df['close'] / sma - 1) * 100
+
+    df['roc_5'] = df['close'].pct_change(5) * 100
+    df['roc_10'] = df['close'].pct_change(10) * 100
+    df['roc_deceleration'] = df['roc_5'] - df['roc_10']
+
+    price_change_5 = df['close'].pct_change(5)
+    vol_change_5 = df['volume'].pct_change(5)
+    df['vol_price_divergence'] = np.where(
+        (price_change_5 > 0) & (vol_change_5 < 0), 1,
+        np.where((price_change_5 < 0) & (vol_change_5 > 0), -1, 0)
+    )
+
+    df['is_red'] = (df['close'] < df['open']).astype(int)
+    df['consec_red'] = 0
+    for i in range(1, len(df)):
+        if df.iloc[i]['is_red']:
+            df.iloc[i, df.columns.get_loc('consec_red')] = df.iloc[i-1]['consec_red'] + 1
+
+    df['high_rejection'] = (df['high'] - df['close']) / (df['high'] - df['low'] + 1e-10)
+    df['dist_from_high_20'] = (df['close'] / df['high'].rolling(20).max() - 1) * 100
+    df['dist_from_high_50'] = (df['close'] / df['high'].rolling(50).max() - 1) * 100
+
+    df['vol_expansion'] = df['1d_atr_14'] / df['1d_atr_14'].shift(5) if '1d_atr_14' in df.columns else 1
+
+    if '1d_rsi_14' in df.columns:
+        df['rsi_slope_5'] = df['1d_rsi_14'].diff(5)
+        df['price_slope_5'] = df['close'].pct_change(5) * 100
+        df['rsi_price_divergence'] = np.where(
+            (df['price_slope_5'] > 0) & (df['rsi_slope_5'] < 0), 1,
+            np.where((df['price_slope_5'] < 0) & (df['rsi_slope_5'] > 0), -1, 0)
+        )
+
+    return df
+
+
 def compute_features(buffers, coin, feature_cols, scaler, seq_len=30):
     """
     Compute features from OHLCV buffers for a coin.
@@ -167,6 +279,16 @@ def compute_features(buffers, coin, feature_cols, scaler, seq_len=30):
         # Cross-TF + non-technical
         df_1d = create_cross_tf_features(df_1d)
         df_1d = create_non_technical_features(df_1d)
+
+        # Market regime features (needed for BTC new model, harmless for others)
+        has_regime = any(c in feature_cols for c in ['sma_50', 'regime_bull', 'accumulation_score'])
+        if has_regime:
+            df_1d = create_market_regime_features(df_1d)
+
+        # Bear features (needed for BTC SHORT model)
+        has_bear = any(c in feature_cols for c in ['price_above_sma10_pct', 'roc_5', 'consec_red'])
+        if has_bear:
+            df_1d = add_bear_features(df_1d)
 
         # Clean
         for c in feature_cols:

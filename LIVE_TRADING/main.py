@@ -53,7 +53,7 @@ class LiveTradingSystem:
         logger.info("=" * 70)
 
         # Load models
-        logger.info("\n[1/3] Loading CNN models...")
+        logger.info("\n[1/3] Loading CNN + Meta-XGBoost models...")
         self.signal_gen.load_models()
 
         # Connect to exchange
@@ -201,39 +201,67 @@ class LiveTradingSystem:
         if not current_price:
             return
 
-        # Try LONG first
+        # Get both predictions first (needed for meta features)
+        l_dir, l_conf, l_probs = None, None, None
+        s_dir, s_conf, s_probs = None, None, None
+
         if long_scaled is not None and coin in self.signal_gen.long_models:
-            l_dir, l_conf = self.signal_gen.predict_long(coin, long_scaled)
-            if l_dir == 1:
-                logger.info(f"{coin}: LONG signal | Conf: {l_conf:.1%}")
-                passes, reason = self.signal_gen.check_long_filters(coin, raw_row, l_conf)
-                if passes:
-                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'LONG')
-                    logger.info(f"{coin}: LONG ACCEPTED | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
+            l_dir, l_conf, l_probs = self.signal_gen.predict_long(coin, long_scaled)
+
+        if short_scaled is not None and coin in self.signal_gen.short_models:
+            s_dir, s_conf, s_probs = self.signal_gen.predict_short(coin, short_scaled)
+
+        # Build meta features (needs both LONG and SHORT predictions)
+        meta_input = None
+        if l_probs is not None and s_probs is not None:
+            meta_input = self.signal_gen.build_meta_features(
+                coin, raw_row,
+                l_conf or 0, l_dir or 0,
+                s_conf or 0, s_dir or 0,
+                l_probs, s_probs
+            )
+
+        # Try LONG first
+        if l_dir == 1 and l_conf is not None:
+            logger.info(f"{coin}: LONG signal | Conf: {l_conf:.1%}")
+            passes, reason = self.signal_gen.check_long_filters(coin, raw_row, l_conf)
+            if passes:
+                # Meta-model check
+                meta_ok, meta_prob = self.signal_gen.check_meta(coin, 'LONG', meta_input)
+                meta_str = f" | Meta: {meta_prob:.1%}" if meta_prob is not None else ""
+                if meta_ok:
+                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'LONG', coin)
+                    logger.info(f"{coin}: LONG ACCEPTED{meta_str} | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
                     order = self.executor.open_long(coin, tp_pct, sl_pct)
                     if order:
                         order['direction'] = 'LONG'
                         self.pos_mgr.open_position(coin, order)
                         return
                 else:
-                    logger.info(f"{coin}: LONG filtered - {reason}")
+                    logger.info(f"{coin}: LONG blocked by META{meta_str}")
+            else:
+                logger.info(f"{coin}: LONG filtered - {reason}")
 
         # Try SHORT if LONG didn't trigger
-        if short_scaled is not None and coin in self.signal_gen.short_models:
-            s_dir, s_conf = self.signal_gen.predict_short(coin, short_scaled)
-            if s_dir == 1:
-                logger.info(f"{coin}: SHORT signal | Conf: {s_conf:.1%}")
-                passes, reason = self.signal_gen.check_short_filters(coin, raw_row, s_conf)
-                if passes:
-                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'SHORT')
-                    logger.info(f"{coin}: SHORT ACCEPTED | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
+        if s_dir == 1 and s_conf is not None:
+            logger.info(f"{coin}: SHORT signal | Conf: {s_conf:.1%}")
+            passes, reason = self.signal_gen.check_short_filters(coin, raw_row, s_conf)
+            if passes:
+                # Meta-model check
+                meta_ok, meta_prob = self.signal_gen.check_meta(coin, 'SHORT', meta_input)
+                meta_str = f" | Meta: {meta_prob:.1%}" if meta_prob is not None else ""
+                if meta_ok:
+                    tp_pct, sl_pct = self.signal_gen.get_dynamic_tp_sl(raw_row, current_price, 'SHORT', coin)
+                    logger.info(f"{coin}: SHORT ACCEPTED{meta_str} | TP: {tp_pct:.2%} | SL: {sl_pct:.2%}")
                     order = self.executor.open_short(coin, tp_pct, sl_pct)
                     if order:
                         order['direction'] = 'SHORT'
                         self.pos_mgr.open_position(coin, order)
                         return
                 else:
-                    logger.info(f"{coin}: SHORT filtered - {reason}")
+                    logger.info(f"{coin}: SHORT blocked by META{meta_str}")
+            else:
+                logger.info(f"{coin}: SHORT filtered - {reason}")
 
         logger.info(f"{coin}: No trade signal")
 

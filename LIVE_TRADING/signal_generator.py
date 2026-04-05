@@ -6,6 +6,7 @@ Each coin has a LONG model and a SHORT model that trade independently.
 
 import sys
 import torch
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import json
@@ -30,6 +31,13 @@ class SignalGenerator:
         self.short_scalers = {}
         self.long_features = {}
         self.short_features = {}
+        # Temperature scaling per coin (from training calibration)
+        self.long_temps = {}
+        self.short_temps = {}
+        # Meta-models (XGBoost) per coin
+        self.meta_long_models = {}
+        self.meta_short_models = {}
+        self.meta_features = {}
         # Separate cooldowns for LONG and SHORT
         self.long_consec = {coin: 0 for coin in COINS}
         self.short_consec = {coin: 0 for coin in COINS}
@@ -39,7 +47,7 @@ class SignalGenerator:
     def _load_one_model(self, path):
         """Load a CNN model - auto-detect DeepCNNShortModel vs CNNDirectionModel"""
         if not path.exists():
-            return None
+            return None, None
         ckpt = torch.load(path, map_location='cpu', weights_only=False)
         feat_dim = ckpt.get('feature_dim', 99)
         seq_len = ckpt.get('sequence_length', 30)
@@ -52,16 +60,18 @@ class SignalGenerator:
 
         model.load_state_dict(ckpt['model_state_dict'])
         model.eval()
-        return model
+        return model, ckpt
 
     def load_models(self):
-        """Load LONG and SHORT models for all coins"""
+        """Load LONG and SHORT models + meta-models for all coins"""
         for coin, cfg in COINS.items():
             # LONG model
             try:
-                m = self._load_one_model(MODEL_DIR / cfg['long_model'])
-                if m:
+                result = self._load_one_model(MODEL_DIR / cfg['long_model'])
+                if result and result[0]:
+                    m, ckpt = result
                     self.long_models[coin] = m
+                    self.long_temps[coin] = ckpt.get('temperature', 1.0)
                     s = MODEL_DIR / cfg['long_scaler']
                     if s.exists():
                         self.long_scalers[coin] = joblib.load(s)
@@ -69,20 +79,19 @@ class SignalGenerator:
                     if f.exists():
                         with open(f) as fh:
                             self.long_features[coin] = json.load(fh)
-                    logger.info(f"{coin} LONG: loaded")
+                    logger.info(f"{coin} LONG: loaded (temp={self.long_temps[coin]:.3f})")
             except Exception as e:
                 logger.error(f"{coin} LONG: {e}")
 
             # SHORT model
             try:
-                m = self._load_one_model(MODEL_DIR / cfg['short_model'])
-                if m:
-                    # Store seq_len from checkpoint
-                    ckpt = torch.load(MODEL_DIR / cfg['short_model'], map_location='cpu', weights_only=False)
+                result = self._load_one_model(MODEL_DIR / cfg['short_model'])
+                if result and result[0]:
+                    m, ckpt = result
+                    self.short_models[coin] = m
+                    self.short_temps[coin] = ckpt.get('temperature', 1.0)
                     self.short_seq_lens = getattr(self, 'short_seq_lens', {})
                     self.short_seq_lens[coin] = ckpt.get('sequence_length', 30)
-                if m:
-                    self.short_models[coin] = m
                     s = MODEL_DIR / cfg['short_scaler']
                     if s.exists():
                         self.short_scalers[coin] = joblib.load(s)
@@ -90,33 +99,106 @@ class SignalGenerator:
                     if f.exists():
                         with open(f) as fh:
                             self.short_features[coin] = json.load(fh)
-                    logger.info(f"{coin} SHORT: loaded")
+                    logger.info(f"{coin} SHORT: loaded (temp={self.short_temps[coin]:.3f})")
             except Exception as e:
                 logger.warning(f"{coin} SHORT: {e}")
 
+            # Meta-models (XGBoost) — only for coins that have them
+            try:
+                coin_lower = coin.lower()
+                meta_long_path = MODEL_DIR / f'{coin_lower}_meta_long.joblib'
+                meta_short_path = MODEL_DIR / f'{coin_lower}_meta_short.joblib'
+                meta_feat_path = MODEL_DIR / f'{coin_lower}_meta_features.json'
+                if meta_long_path.exists():
+                    self.meta_long_models[coin] = joblib.load(meta_long_path)
+                    logger.info(f"{coin} META LONG: loaded")
+                if meta_short_path.exists():
+                    self.meta_short_models[coin] = joblib.load(meta_short_path)
+                    logger.info(f"{coin} META SHORT: loaded")
+                if meta_feat_path.exists():
+                    with open(meta_feat_path) as fh:
+                        self.meta_features[coin] = json.load(fh)
+            except Exception as e:
+                logger.warning(f"{coin} META: {e}")
+
     def predict_long(self, coin, scaled_features):
+        """Predict LONG with temperature-calibrated confidence"""
         if coin not in self.long_models:
-            return None, None
+            return None, None, None
         try:
             X = torch.tensor(scaled_features, dtype=torch.float32).unsqueeze(0)
+            temp = self.long_temps.get(coin, 1.0)
             with torch.no_grad():
-                d, c = self.long_models[coin].predict_direction(X)
-            return d.item(), c.item()
+                logits = self.long_models[coin](X)
+                probs = F.softmax(logits / temp, dim=1).squeeze()
+            conf, direction = probs.max(0)
+            return direction.item(), conf.item(), probs.cpu().numpy()
         except Exception as e:
             logger.error(f"{coin} LONG predict: {e}")
-            return None, None
+            return None, None, None
 
     def predict_short(self, coin, scaled_features):
+        """Predict SHORT with temperature-calibrated confidence"""
         if coin not in self.short_models:
-            return None, None
+            return None, None, None
         try:
             X = torch.tensor(scaled_features, dtype=torch.float32).unsqueeze(0)
+            temp = self.short_temps.get(coin, 1.0)
             with torch.no_grad():
-                d, c = self.short_models[coin].predict_direction(X)
-            return d.item(), c.item()
+                logits = self.short_models[coin](X)
+                probs = F.softmax(logits / temp, dim=1).squeeze()
+            conf, direction = probs.max(0)
+            return direction.item(), conf.item(), probs.cpu().numpy()
         except Exception as e:
             logger.error(f"{coin} SHORT predict: {e}")
-            return None, None
+            return None, None, None
+
+    def build_meta_features(self, coin, raw_row, l_conf, l_dir, s_conf, s_dir, l_probs, s_probs):
+        """Build meta-model input features (matches 05_train_meta_xgboost.py)"""
+        if coin not in self.meta_features:
+            return None
+
+        meta_feat_cols = self.meta_features[coin]
+        mf = {}
+        # CNN-derived features
+        mf['long_conf'] = l_conf
+        mf['long_dir'] = l_dir
+        mf['short_conf'] = s_conf
+        mf['short_dir'] = s_dir
+        mf['long_prob_spread'] = abs(float(l_probs[1]) - float(l_probs[0]))
+        mf['short_prob_spread'] = abs(float(s_probs[1]) - float(s_probs[0]))
+        mf['models_agree_bull'] = int(l_dir == 1 and s_dir == 0)
+        mf['models_agree_bear'] = int(l_dir == 0 and s_dir == 1)
+        mf['models_conflict'] = int(l_dir == 1 and s_dir == 1)
+        mf['models_neutral'] = int(l_dir == 0 and s_dir == 0)
+        mf['conf_diff'] = l_conf - s_conf
+        mf['max_conf'] = max(l_conf, s_conf)
+        mf['min_conf'] = min(l_conf, s_conf)
+
+        # Market context features from raw_row
+        for c in meta_feat_cols:
+            if c not in mf:
+                val = raw_row.get(c, 0) if hasattr(raw_row, 'get') else (raw_row[c] if c in raw_row.index else 0)
+                mf[c] = float(val) if pd.notna(val) else 0.0
+
+        return np.array([[mf.get(c, 0) for c in meta_feat_cols]])
+
+    def check_meta(self, coin, direction, meta_input):
+        """Check if meta-model approves the CNN signal. Returns (approved, probability)"""
+        if meta_input is None:
+            return True, None  # No meta = always approve
+
+        cfg = COINS[coin]
+        if direction == 'LONG' and coin in self.meta_long_models:
+            prob = self.meta_long_models[coin].predict_proba(meta_input)[0][1]
+            threshold = cfg.get('long_meta_conf', 0.45)
+            return prob >= threshold, prob
+        elif direction == 'SHORT' and coin in self.meta_short_models:
+            prob = self.meta_short_models[coin].predict_proba(meta_input)[0][1]
+            threshold = cfg.get('short_meta_conf', 0.50)
+            return prob >= threshold, prob
+
+        return True, None  # No meta model for this coin/direction
 
     def check_long_filters(self, coin, raw_row, confidence):
         """LONG-specific filters"""
@@ -199,12 +281,23 @@ class SignalGenerator:
 
         return True, "pass"
 
-    def get_dynamic_tp_sl(self, raw_row, entry_price, direction='LONG'):
-        """Calculate TP/SL based on ATR"""
+    def get_dynamic_tp_sl(self, raw_row, entry_price, direction='LONG', coin='BTC'):
+        """Calculate TP/SL based on ATR — symmetric for BTC (matches training), legacy for others"""
         atr = None
         if '1d_atr_14' in raw_row.index and pd.notna(raw_row['1d_atr_14']):
             atr = raw_row['1d_atr_14']
 
+        # BTC uses symmetric ATR TP/SL (matches training labels: ATR_MULT=1.5)
+        if coin == 'BTC':
+            ATR_MULT = 1.5
+            if TRADING['use_dynamic_tp_sl'] and atr and atr > 0:
+                tp = min(max(ATR_MULT * atr / entry_price, 0.008), 0.04)
+                sl = tp  # Symmetric
+            else:
+                tp, sl = 0.012, 0.012  # Fallback matches training
+            return tp, sl
+
+        # Other coins: legacy asymmetric TP/SL
         if direction == 'LONG':
             if TRADING['use_dynamic_tp_sl'] and atr and atr > 0:
                 tp = min(max(atr / entry_price, 0.008), 0.03)

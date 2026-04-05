@@ -31,8 +31,10 @@ COINS = {
         'long_features': 'btc_features.json',
         'short_features': 'btc_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,
-        'short_conf': 0.55,   # Backtest original optimized
+        'long_conf': 0.75,    # V3: strict in bear market (CNN+Meta model)
+        'short_conf': 0.55,   # V3: optimized with meta filtering
+        'long_meta_conf': 0.45,   # V3: XGBoost meta threshold LONG
+        'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
         'data_start': '2017-01-01',
     },
     'ETH': {
@@ -151,8 +153,8 @@ COINS = {
 
 # Trading parameters
 TRADING = {
-    'tp_pct': 0.015,
-    'sl_pct': 0.0075,
+    'tp_pct': 0.015,      # Default for non-BTC coins
+    'sl_pct': 0.0075,     # BTC uses symmetric ATR in signal_generator
     'position_size_pct': 0.10,     # 10% per coin (9 coins = 90% max exposure)
     'trading_fee': 0.001,
     'slippage': 0.0005,

@@ -54,32 +54,57 @@ GRAD_CLIP = 0.5
 NOISE_STD = 0.015
 LABEL_SMOOTHING = 0.1
 
-TP_PCT = 0.015
-SL_PCT = 0.0075
+# Match feature engineering ATR-based labeling
+ATR_TP_MULT = 1.5
+ATR_SL_MULT = 1.5
+FIXED_TP_PCT = 0.012
+FIXED_SL_PCT = 0.012
+BASE_LOOKAHEAD = 10
+ATR_LOOKAHEAD_MULT = 0.7
 
 TRAIN_START = '2017-01-01'
-TRAIN_END = '2024-12-31'
-VAL_START = '2025-01-01'
+TRAIN_END = '2025-09-30'
+VAL_START = '2025-10-01'
 VAL_END = '2025-12-31'
 
 
 def create_labels(df):
+    """ATR-adaptive labels — labels are kept but bear_flag used for sample weighting."""
+    import ta as ta_lib
+    atr = ta_lib.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+    median_atr = atr.rolling(50).median()
+
     labels = []
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
         entry = df.iloc[i]['close']
-        tp = entry * (1 + TP_PCT)
-        sl = entry * (1 - SL_PCT)
+        cur_atr = atr.iloc[i]
+        if pd.notna(cur_atr) and cur_atr > 0:
+            tp_dist = cur_atr * ATR_TP_MULT
+            sl_dist = cur_atr * ATR_SL_MULT
+        else:
+            tp_dist = entry * FIXED_TP_PCT
+            sl_dist = entry * FIXED_SL_PCT
+        tp = entry + tp_dist
+        sl = entry - sl_dist
+        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else cur_atr
+        if pd.notna(med) and med > 0:
+            vol_ratio = cur_atr / med
+            lookahead = int(BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * ATR_LOOKAHEAD_MULT + 0.3)))
+        else:
+            lookahead = BASE_LOOKAHEAD
+        lookahead = max(5, min(20, lookahead))
         hit_tp, hit_sl = False, False
-        for j in range(i+1, min(i+11, len(df))):
+        for j in range(i+1, min(i+1+lookahead, len(df))):
             if df.iloc[j]['high'] >= tp:
                 hit_tp = True
                 break
             if df.iloc[j]['low'] <= sl:
                 hit_sl = True
                 break
+
         if hit_tp:
             labels.append(1)
         elif hit_sl:
@@ -113,11 +138,19 @@ def augment_data(X, y, noise_std=0.02, n_copies=2):
 def train_epoch(model, dataloader, criterion, optimizer, device, grad_clip):
     model.train()
     total_loss, correct, total = 0, 0, 0
-    for X_batch, y_batch in dataloader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+    for batch in dataloader:
+        if len(batch) == 3:
+            X_batch, y_batch, w_batch = batch
+            X_batch, y_batch, w_batch = X_batch.to(device), y_batch.to(device), w_batch.to(device)
+        else:
+            X_batch, y_batch = batch[0].to(device), batch[1].to(device)
+            w_batch = None
         optimizer.zero_grad()
         logits = model(X_batch)
         loss = criterion(logits, y_batch)
+        # Apply sample weights
+        if w_batch is not None:
+            loss = (loss * w_batch).mean() if loss.dim() > 0 else loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
@@ -133,10 +166,10 @@ def validate(model, dataloader, criterion, device):
     total_loss, correct, total = 0, 0, 0
     all_preds, all_labels = [], []
     with torch.no_grad():
-        for X_batch, y_batch in dataloader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        for batch in dataloader:
+            X_batch, y_batch = batch[0].to(device), batch[1].to(device)
             logits = model(X_batch)
-            loss = criterion(logits, y_batch)
+            loss = criterion(logits, y_batch).mean()
             total_loss += loss.item()
             _, pred = torch.max(logits, 1)
             correct += (pred == y_batch).sum().item()
@@ -188,27 +221,61 @@ def train():
 
     joblib.dump(scaler, MODEL_DIR / 'feature_scaler.joblib')
 
-    # Build sequences
-    train_seqs, train_labels = build_sequences(X_train_scaled, y_train_raw, SEQUENCE_LENGTH)
+    # Build sequences with sample weights
+    # Get bear flag for sample weighting
+    bear_flag = train_df['is_strong_bear'].values if 'is_strong_bear' in train_df.columns else np.zeros(len(train_df))
+
+    train_seqs, train_labels, train_weights = [], [], []
+    for i in range(SEQUENCE_LENGTH, len(X_train_scaled)):
+        if y_train_raw[i] != -1:
+            train_seqs.append(X_train_scaled[i-SEQUENCE_LENGTH:i])
+            train_labels.append(y_train_raw[i])
+            # Sample weight: TP in bear -> 0.3x, SL in bear -> 2x, normal -> 1.0
+            is_bear = bear_flag[i] if i < len(bear_flag) else 0
+            if is_bear and y_train_raw[i] == 1:  # TP in bear = lucky bounce, downweight
+                train_weights.append(0.3)
+            elif is_bear and y_train_raw[i] == 0:  # SL in bear = expected, upweight
+                train_weights.append(2.0)
+            else:
+                train_weights.append(1.0)
+    train_seqs = np.array(train_seqs)
+    train_labels = np.array(train_labels)
+    train_weights = np.array(train_weights, dtype=np.float32)
+
     val_seqs, val_labels = build_sequences(X_val_scaled, y_val_raw, SEQUENCE_LENGTH)
 
     logger.info(f"Train sequences: {len(train_seqs)} | Val: {len(val_seqs)}")
 
     n_sl = (train_labels == 0).sum()
     n_tp = (train_labels == 1).sum()
+    n_bear_tp = ((train_labels == 1) & (train_weights < 1.0)).sum()
+    n_bear_sl = ((train_labels == 0) & (train_weights > 1.0)).sum()
     logger.info(f"Train dist: SL={n_sl} ({n_sl/len(train_labels)*100:.1f}%), TP={n_tp} ({n_tp/len(train_labels)*100:.1f}%)")
+    logger.info(f"Bear-weighted: {n_bear_tp} TP downweighted (0.3x), {n_bear_sl} SL upweighted (2x)")
 
-    # Data augmentation
-    train_seqs_aug, train_labels_aug = augment_data(train_seqs, train_labels, NOISE_STD, n_copies=2)
+    # Data augmentation (keep weights aligned)
+    aug_seqs, aug_labels, aug_weights = [train_seqs], [train_labels], [train_weights]
+    for _ in range(2):
+        noise = np.random.normal(0, NOISE_STD, train_seqs.shape).astype(np.float32)
+        aug_seqs.append(train_seqs + noise)
+        aug_labels.append(train_labels)
+        aug_weights.append(train_weights)
+    train_seqs_aug = np.concatenate(aug_seqs)
+    train_labels_aug = np.concatenate(aug_labels)
+    train_weights_aug = np.concatenate(aug_weights)
     logger.info(f"After augmentation: {len(train_seqs_aug)} train sequences")
 
-    # Class weights
+    # Class weights (on top of sample weights)
     weight_sl = len(train_labels) / (2 * n_sl) if n_sl > 0 else 1.0
     weight_tp = len(train_labels) / (2 * n_tp) if n_tp > 0 else 1.0
     class_weights = torch.FloatTensor([weight_sl, weight_tp])
 
-    # Dataloaders
-    train_dataset = TensorDataset(torch.FloatTensor(train_seqs_aug), torch.LongTensor(train_labels_aug))
+    # Dataloaders — include sample weights
+    train_dataset = TensorDataset(
+        torch.FloatTensor(train_seqs_aug),
+        torch.LongTensor(train_labels_aug),
+        torch.FloatTensor(train_weights_aug)
+    )
     val_dataset = TensorDataset(torch.FloatTensor(val_seqs), torch.LongTensor(val_labels))
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
@@ -219,7 +286,7 @@ def train():
     n_params = sum(p.numel() for p in model.parameters())
     logger.info(f"\nModel: CNNDirectionModel | Params: {n_params:,} | Device: {device}")
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device), label_smoothing=LABEL_SMOOTHING)
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device), label_smoothing=LABEL_SMOOTHING, reduction='none')
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
 
@@ -289,21 +356,60 @@ def train():
     cm = confusion_matrix(final_labels, final_preds)
     logger.info(f"Confusion: SL[{cm[0][0]},{cm[0][1]}] TP[{cm[1][0]},{cm[1][1]}]")
 
-    # Confidence analysis on val
+    # === TEMPERATURE SCALING (Confidence Calibration) ===
+    logger.info(f"\n{'='*70}")
+    logger.info(f"TEMPERATURE SCALING (Confidence Calibration)")
+    logger.info(f"{'='*70}")
+
+    # Collect logits on validation set
     model.eval()
+    all_logits, all_true_labels = [], []
+    with torch.no_grad():
+        for X_b, y_b in val_loader:
+            logits = model(X_b.to(device))
+            all_logits.append(logits.cpu())
+            all_true_labels.append(y_b)
+    all_logits = torch.cat(all_logits)
+    all_true_labels = torch.cat(all_true_labels)
+
+    # Optimize temperature on validation set
+    temperature = nn.Parameter(torch.ones(1) * 1.5)
+    temp_optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=100)
+    nll_criterion = nn.CrossEntropyLoss()
+
+    def temp_eval():
+        temp_optimizer.zero_grad()
+        loss = nll_criterion(all_logits / temperature, all_true_labels)
+        loss.backward()
+        return loss
+
+    temp_optimizer.step(temp_eval)
+    optimal_temp = temperature.item()
+    logger.info(f"  Optimal temperature: {optimal_temp:.4f}")
+
+    # Save temperature alongside model
+    ckpt = torch.load(MODEL_DIR / 'BTC_direction_model.pt')
+    ckpt['temperature'] = optimal_temp
+    torch.save(ckpt, MODEL_DIR / 'BTC_direction_model.pt')
+    logger.info(f"  Temperature saved in model checkpoint")
+
+    # Confidence analysis with calibrated probabilities
     all_confs, all_dirs, all_trues = [], [], []
     with torch.no_grad():
         for X_b, y_b in val_loader:
-            d, c = model.predict_direction(X_b.to(device))
-            all_dirs.extend(d.cpu().numpy())
-            all_confs.extend(c.cpu().numpy())
+            logits = model(X_b.to(device))
+            # Apply temperature scaling
+            calibrated_probs = torch.softmax(logits / optimal_temp, dim=1)
+            confidence, direction = torch.max(calibrated_probs, dim=1)
+            all_dirs.extend(direction.cpu().numpy())
+            all_confs.extend(confidence.cpu().numpy())
             all_trues.extend(y_b.numpy())
 
     all_dirs = np.array(all_dirs)
     all_confs = np.array(all_confs)
     all_trues = np.array(all_trues)
 
-    logger.info(f"\nConfidence Analysis (BUY signals only):")
+    logger.info(f"\nCalibrated Confidence Analysis (BUY signals only):")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = (all_dirs == 1) & (all_confs >= thresh)
         if mask.sum() > 0:
