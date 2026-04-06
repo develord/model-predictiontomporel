@@ -1,12 +1,11 @@
 """
-DOGE SHORT CNN Training Script V2
+DOGE SHORT CNN Training Script V3
 ==================================
-Improved SHORT model with:
-- Better TP/SL params (2% TP, 1% SL) for balanced labels
-- Bear-specific features added to existing features
-- Deeper CNN architecture
-- Longer sequence (45 days) to capture distribution patterns
-- More aggressive augmentation
+V3 upgrades:
+- DeepCNNShortModel (conv 3,5,9 + 3 blocks, seq=45)
+- ATR-adaptive symmetric TP/SL labeling
+- Temperature calibration
+- +15 bear-specific features
 
 Usage:
     python 03_train_short_model.py
@@ -38,7 +37,7 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 30  # Match LONG model
+SEQUENCE_LENGTH = 45  # Longer for DeepCNN to capture distribution patterns
 BATCH_SIZE = 64
 EPOCHS = 250
 LEARNING_RATE = 0.0005
@@ -47,13 +46,17 @@ GRAD_CLIP = 0.5
 NOISE_STD = 0.01
 LABEL_SMOOTHING = 0.1
 
-# Train labels: detect -2% drops (model learns the pattern)
-# Execution SL will be wider (3-4%) via leverage in backtest
-SHORT_TP_PCT = 0.020
-SHORT_SL_PCT = 0.010
+# ATR-based SHORT labeling (symmetric = no bias)
+SHORT_ATR_TP_MULT = 1.5   # TP = 1.5x ATR drop
+SHORT_ATR_SL_MULT = 1.5   # SL = 1.5x ATR rise (symmetric)
+SHORT_FIXED_TP_PCT = 0.012
+SHORT_FIXED_SL_PCT = 0.012
+SHORT_BASE_LOOKAHEAD = 10
+SHORT_ATR_LOOKAHEAD_MULT = 0.7
 
-TRAIN_END = '2024-12-31'
-VAL_START = '2025-01-01'
+TRAIN_START = '2019-07-01'
+TRAIN_END = '2025-06-30'
+VAL_START = '2025-07-01'
 VAL_END = '2025-12-31'
 
 
@@ -191,16 +194,34 @@ def add_bear_features(df):
 
 
 def create_short_labels(df):
+    """ATR-adaptive SHORT labels (symmetric TP/SL)"""
+    import ta as ta_lib
+    atr = ta_lib.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+    median_atr = atr.rolling(50).median()
     labels = []
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
         entry = df.iloc[i]['close']
-        tp = entry * (1 - SHORT_TP_PCT)
-        sl = entry * (1 + SHORT_SL_PCT)
+        cur_atr = atr.iloc[i]
+        if pd.notna(cur_atr) and cur_atr > 0:
+            tp_dist = cur_atr * SHORT_ATR_TP_MULT
+            sl_dist = cur_atr * SHORT_ATR_SL_MULT
+        else:
+            tp_dist = entry * SHORT_FIXED_TP_PCT
+            sl_dist = entry * SHORT_FIXED_SL_PCT
+        tp = entry - tp_dist   # SHORT TP = price drops
+        sl = entry + sl_dist   # SHORT SL = price rises
+        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else cur_atr
+        if pd.notna(med) and med > 0:
+            vol_ratio = cur_atr / med
+            lookahead = int(SHORT_BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * SHORT_ATR_LOOKAHEAD_MULT + 0.3)))
+        else:
+            lookahead = SHORT_BASE_LOOKAHEAD
+        lookahead = max(5, min(20, lookahead))
         hit_tp, hit_sl = False, False
-        for j in range(i+1, min(i+11, len(df))):
+        for j in range(i+1, min(i+1+lookahead, len(df))):
             if df.iloc[j]['low'] <= tp:
                 hit_tp = True
                 break
@@ -235,7 +256,7 @@ def augment(X, y, noise=0.01, copies=3):
 
 def train():
     logger.info(f"\n{'='*70}")
-    logger.info(f"DOGE SHORT CNN V2 TRAINING (DeepCNN + Bear Features)")
+    logger.info(f"DOGE SHORT CNN V3 TRAINING (DeepCNNShortModel + ATR Labels + Temperature)")
     logger.info(f"{'='*70}\n")
 
     df = pd.read_csv(DATA_DIR / 'doge_features.csv')
@@ -263,17 +284,20 @@ def train():
     FEATURE_DIM = len(feature_cols)
     logger.info(f"Features: {FEATURE_DIM} ({len(base_features)} base + {FEATURE_DIM - len(base_features)} bear)")
 
-    # Labels
-    logger.info(f"Creating SHORT labels (TP={SHORT_TP_PCT:.1%} drop, SL={SHORT_SL_PCT:.1%} rise)...")
+    # Labels - ATR-adaptive
+    logger.info(f"Creating SHORT labels (ATR-based, TP={SHORT_ATR_TP_MULT}x ATR, SL={SHORT_ATR_SL_MULT}x ATR)...")
     df['label'] = create_short_labels(df)
 
     n1 = (df['label'] == 1).sum()
     n0 = (df['label'] == 0).sum()
     logger.info(f"  SHORT profitable: {n1} | No short: {n0} | Ratio: {n1/(n0+1):.2f}")
 
-    # Split
-    train_df = df[df['date'] <= TRAIN_END].copy()
-    val_df = df[(df['date'] >= VAL_START) & (df['date'] <= VAL_END)].copy()
+    # Split by date
+    train_mask = (df['date'] >= TRAIN_START) & (df['date'] <= TRAIN_END)
+    val_mask = (df['date'] >= VAL_START) & (df['date'] <= VAL_END)
+    train_df = df[train_mask].copy()
+    val_df = df[val_mask].copy()
+    logger.info(f"Train: {len(train_df)} | Val: {len(val_df)}")
 
     # Scale
     X_train_raw = train_df[feature_cols].fillna(0).replace([np.inf, -np.inf], 0).values.astype(np.float32)
@@ -307,18 +331,30 @@ def train():
     val_loader = DataLoader(TensorDataset(torch.FloatTensor(val_seqs), torch.LongTensor(val_labels)),
                             batch_size=BATCH_SIZE)
 
-    # Model
+    # Model - V3 uses DeepCNNShortModel
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    from direction_prediction_model import CNNDirectionModel
-    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
+    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: DeepCNNShortModel | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
 
     best_acc, patience_cnt, best_epoch = 0, 0, 0
+    model_saved = False
+
+    # Save initial model as fallback
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'feature_dim': FEATURE_DIM,
+        'sequence_length': SEQUENCE_LENGTH,
+        'model_type': 'deep_cnn',
+        'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+        'short_atr_sl_mult': SHORT_ATR_SL_MULT,
+        'epoch': 0,
+        'val_acc': 0,
+    }, MODEL_DIR / 'DOGE_short_model.pt')
 
     for epoch in range(EPOCHS):
         model.train()
@@ -349,23 +385,24 @@ def train():
         pa, la = np.array(all_p), np.array(all_l)
         sp = la[pa == 1].mean() * 100 if n_short > 0 else 0
 
-        if (epoch + 1) % 10 == 0:
-            logger.info(f"E{epoch+1:3d}/{EPOCHS} | Acc:{acc:.3f} | SHORT={n_short} NO={n_no} | ShortPrec={sp:.0f}%")
+        logger.info(f"E{epoch+1:3d}/{EPOCHS} | Acc:{acc:.3f} | SHORT={n_short} NO={n_no} | ShortPrec={sp:.0f}%")
 
-        if acc > best_acc and n_short >= 5 and n_no >= 5:
+        if acc > best_acc and n_short >= 3 and n_no >= 3:
             best_acc = acc
             best_epoch = epoch + 1
             patience_cnt = 0
+            model_saved = True
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
-                'model_type': 'cnn',
-                'short_tp_pct': SHORT_TP_PCT,
-                'short_sl_pct': SHORT_SL_PCT,
+                'model_type': 'deep_cnn',
+                'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+                'short_atr_sl_mult': SHORT_ATR_SL_MULT,
                 'epoch': epoch + 1,
                 'val_acc': acc,
             }, MODEL_DIR / 'DOGE_short_model.pt')
+            logger.info(f"  >>> BEST saved (acc={acc:.3f}, SHORT={n_short}, ShortPrec={sp:.0f}%)")
         else:
             patience_cnt += 1
 
@@ -378,21 +415,54 @@ def train():
     model.load_state_dict(ckpt['model_state_dict'])
     model.eval()
 
+    logger.info(f"\n{'='*70}")
+    logger.info(f"TRAINING COMPLETE | Best epoch: {best_epoch} | Best acc: {best_acc:.3f}")
+    logger.info(f"{'='*70}")
+
+    # === TEMPERATURE SCALING ===
+    logger.info(f"\nTemperature Scaling (Confidence Calibration)...")
+    all_logits_t, all_labels_t = [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            all_logits_t.append(logits.cpu())
+            all_labels_t.append(yb)
+    all_logits_t = torch.cat(all_logits_t)
+    all_labels_t = torch.cat(all_labels_t)
+
+    temperature = nn.Parameter(torch.ones(1) * 1.5)
+    temp_optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=100)
+    nll_criterion = nn.CrossEntropyLoss()
+
+    def temp_eval():
+        temp_optimizer.zero_grad()
+        loss = nll_criterion(all_logits_t / temperature, all_labels_t)
+        loss.backward()
+        return loss
+
+    temp_optimizer.step(temp_eval)
+    optimal_temp = temperature.item()
+    logger.info(f"  Optimal temperature: {optimal_temp:.4f}")
+
+    # Save temperature in checkpoint
+    ckpt_data = torch.load(MODEL_DIR / 'DOGE_short_model.pt')
+    ckpt_data['temperature'] = optimal_temp
+    torch.save(ckpt_data, MODEL_DIR / 'DOGE_short_model.pt')
+
+    # Calibrated confidence analysis
     all_confs, all_dirs, all_trues = [], [], []
     with torch.no_grad():
         for xb, yb in val_loader:
-            d, c = model.predict_direction(xb.to(device))
-            all_dirs.extend(d.cpu().numpy())
-            all_confs.extend(c.cpu().numpy())
+            logits = model(xb.to(device))
+            calibrated_probs = torch.softmax(logits / optimal_temp, dim=1)
+            confidence, direction = torch.max(calibrated_probs, dim=1)
+            all_dirs.extend(direction.cpu().numpy())
+            all_confs.extend(confidence.cpu().numpy())
             all_trues.extend(yb.numpy())
 
     ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
 
-    logger.info(f"\n{'='*70}")
-    logger.info(f"TRAINING COMPLETE | Best epoch: {best_epoch} | Best acc: {best_acc:.3f}")
-    logger.info(f"{'='*70}")
-    logger.info(f"\nShort TP={SHORT_TP_PCT:.1%} | Short SL={SHORT_SL_PCT:.1%}")
-    logger.info(f"\nConfidence Analysis (SHORT signals):")
+    logger.info(f"\nCalibrated Confidence Analysis (SHORT signals):")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = (ad == 1) & (ac >= thresh)
         if mask.sum() > 0:

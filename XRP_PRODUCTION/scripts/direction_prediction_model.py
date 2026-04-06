@@ -466,6 +466,84 @@ def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+class DeepCNNShortModel(nn.Module):
+    """Deeper CNN specifically designed for SHORT detection.
+    More conv layers to detect complex distribution/top patterns."""
+
+    def __init__(self, feature_dim, sequence_length=45, dropout=0.35):
+        super().__init__()
+
+        self.input_proj = nn.Sequential(
+            nn.Linear(feature_dim, 96),
+            nn.BatchNorm1d(sequence_length),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+        self.conv3_1 = nn.Conv1d(96, 48, kernel_size=3, padding=1)
+        self.conv5_1 = nn.Conv1d(96, 48, kernel_size=5, padding=2)
+        self.conv9_1 = nn.Conv1d(96, 48, kernel_size=9, padding=4)
+        self.bn1 = nn.BatchNorm1d(144)
+        self.drop1 = nn.Dropout(dropout)
+
+        self.conv2 = nn.Sequential(
+            nn.Conv1d(144, 96, kernel_size=3, padding=1),
+            nn.BatchNorm1d(96),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+        self.conv3 = nn.Sequential(
+            nn.Conv1d(96, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.7)
+        )
+
+        self.attention = nn.Sequential(
+            nn.Linear(64, 24),
+            nn.Tanh(),
+            nn.Linear(24, 1)
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Linear(64, 48),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
+            nn.Linear(48, 24),
+            nn.GELU(),
+            nn.Linear(24, 2)
+        )
+
+    def forward(self, x):
+        x = self.input_proj(x)
+        x = x.permute(0, 2, 1)
+
+        c3 = F.gelu(self.conv3_1(x))
+        c5 = F.gelu(self.conv5_1(x))
+        c9 = F.gelu(self.conv9_1(x))
+        x = torch.cat([c3, c5, c9], dim=1)
+        x = self.bn1(x)
+        x = self.drop1(x)
+
+        x = self.conv2(x)
+        x = self.conv3(x)
+
+        x = x.permute(0, 2, 1)
+        attn = F.softmax(self.attention(x), dim=1)
+        x = (x * attn).sum(dim=1)
+
+        return self.classifier(x)
+
+    def predict_direction(self, x):
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            probs = F.softmax(logits, dim=1)
+            confidence, direction = probs.max(dim=1)
+            return direction, confidence
+
+
 if __name__ == "__main__":
     # Test models
     print("Testing Direction Prediction Models...\n")

@@ -38,22 +38,26 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 45  # Longer to capture distribution/top patterns
+SEQUENCE_LENGTH = 45  # Deep SHORT model seq
 BATCH_SIZE = 64
 EPOCHS = 250
-LEARNING_RATE = 0.0005
-PATIENCE = 40
-GRAD_CLIP = 0.5
+LEARNING_RATE = 0.002
+PATIENCE = 50
+GRAD_CLIP = 1.0
 NOISE_STD = 0.01
-LABEL_SMOOTHING = 0.1
+LABEL_SMOOTHING = 0.05
 
-# Balanced labels: TP=2% drop, SL=1% rise (ratio ~1:1)
-SHORT_TP_PCT = 0.020
-SHORT_SL_PCT = 0.010
+# ATR-based SHORT labeling (symmetric = no bias)
+SHORT_ATR_TP_MULT = 1.5   # TP = 1.5x ATR drop
+SHORT_ATR_SL_MULT = 1.5   # SL = 1.5x ATR rise (symmetric)
+SHORT_FIXED_TP_PCT = 0.012
+SHORT_FIXED_SL_PCT = 0.012
+SHORT_BASE_LOOKAHEAD = 10
+SHORT_ATR_LOOKAHEAD_MULT = 0.7
 
-TRAIN_END = '2025-12-31'
-VAL_START = '2026-01-01'
-VAL_END = '2026-04-03'
+TRAIN_END = '2025-06-30'
+VAL_START = '2025-07-01'
+VAL_END = '2025-12-31'
 
 
 class DeepCNNShortModel(nn.Module):
@@ -190,16 +194,34 @@ def add_bear_features(df):
 
 
 def create_short_labels(df):
+    """ATR-adaptive SHORT labels (symmetric TP/SL)"""
+    import ta as ta_lib
+    atr = ta_lib.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+    median_atr = atr.rolling(50).median()
     labels = []
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
         entry = df.iloc[i]['close']
-        tp = entry * (1 - SHORT_TP_PCT)
-        sl = entry * (1 + SHORT_SL_PCT)
+        cur_atr = atr.iloc[i]
+        if pd.notna(cur_atr) and cur_atr > 0:
+            tp_dist = cur_atr * SHORT_ATR_TP_MULT
+            sl_dist = cur_atr * SHORT_ATR_SL_MULT
+        else:
+            tp_dist = entry * SHORT_FIXED_TP_PCT
+            sl_dist = entry * SHORT_FIXED_SL_PCT
+        tp = entry - tp_dist   # SHORT TP = price drops
+        sl = entry + sl_dist   # SHORT SL = price rises
+        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else cur_atr
+        if pd.notna(med) and med > 0:
+            vol_ratio = cur_atr / med
+            lookahead = int(SHORT_BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * SHORT_ATR_LOOKAHEAD_MULT + 0.3)))
+        else:
+            lookahead = SHORT_BASE_LOOKAHEAD
+        lookahead = max(5, min(20, lookahead))
         hit_tp, hit_sl = False, False
-        for j in range(i+1, min(i+11, len(df))):
+        for j in range(i+1, min(i+1+lookahead, len(df))):
             if df.iloc[j]['low'] <= tp:
                 hit_tp = True
                 break
@@ -263,7 +285,7 @@ def train():
     logger.info(f"Features: {FEATURE_DIM} ({len(base_features)} base + {FEATURE_DIM - len(base_features)} bear)")
 
     # Labels
-    logger.info(f"Creating SHORT labels (TP={SHORT_TP_PCT:.1%} drop, SL={SHORT_SL_PCT:.1%} rise)...")
+    logger.info(f"Creating SHORT labels (ATR-based, TP={SHORT_ATR_TP_MULT}x ATR, SL={SHORT_ATR_SL_MULT}x ATR)...")
     df['label'] = create_short_labels(df)
 
     n1 = (df['label'] == 1).sum()
@@ -294,12 +316,12 @@ def train():
     logger.info(f"Train: {len(train_seqs)} (No={n_0}, Short={n_1}) | Val: {len(val_seqs)}")
 
     # Augment (3x)
-    train_seqs_a, train_labels_a = augment(train_seqs, train_labels, NOISE_STD, copies=3)
-    logger.info(f"After augmentation: {len(train_seqs_a)} (4x)")
+    train_seqs_a, train_labels_a = augment(train_seqs, train_labels, NOISE_STD, copies=2)
+    logger.info(f"After augmentation: {len(train_seqs_a)} (3x)")
 
-    # Class weights
+    # Class weights — boost SHORT class to prevent NO-collapse
     w0 = len(train_labels) / (2 * n_0) if n_0 > 0 else 1.0
-    w1 = len(train_labels) / (2 * n_1) if n_1 > 0 else 1.0
+    w1 = (len(train_labels) / (2 * n_1)) * 2.0 if n_1 > 0 else 2.0  # 2x boost for SHORT
 
     train_loader = DataLoader(TensorDataset(torch.FloatTensor(train_seqs_a), torch.LongTensor(train_labels_a)),
                               batch_size=BATCH_SIZE, shuffle=True)
@@ -308,51 +330,64 @@ def train():
 
     # Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # Use simpler CNNDirectionModel for XRP (DeepCNN too complex for this dataset)
-    from direction_prediction_model import CNNDirectionModel
-    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
+    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.15).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: DeepCNNShortModel (conv 3,5,9 + 3 blocks) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
 
     best_acc, patience_cnt, best_epoch = 0, 0, 0
 
     for epoch in range(EPOCHS):
         model.train()
+        train_loss_sum, train_batches = 0, 0
+        train_correct, train_total = 0, 0
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
+            logits = model(xb)
+            loss = criterion(logits, yb)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             optimizer.step()
+            train_loss_sum += loss.item()
+            train_batches += 1
+            train_correct += (logits.argmax(1) == yb).sum().item()
+            train_total += yb.size(0)
         scheduler.step(epoch)
+        train_loss = train_loss_sum / train_batches
+        train_acc = train_correct / train_total
 
         model.eval()
         correct, total, n_short, n_no = 0, 0, 0, 0
         all_p, all_l = [], []
+        val_loss_sum, val_batches = 0, 0
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb, yb = xb.to(device), yb.to(device)
-                pred = model(xb).argmax(1)
+                logits = model(xb)
+                pred = logits.argmax(1)
+                val_loss_sum += criterion(logits, yb).item()
+                val_batches += 1
                 correct += (pred == yb).sum().item()
                 total += yb.size(0)
                 n_short += (pred == 1).sum().item()
                 n_no += (pred == 0).sum().item()
                 all_p.extend(pred.cpu().numpy())
                 all_l.extend(yb.cpu().numpy())
+        val_loss = val_loss_sum / val_batches if val_batches > 0 else 0
 
         acc = correct / total if total > 0 else 0
         pa, la = np.array(all_p), np.array(all_l)
         sp = la[pa == 1].mean() * 100 if n_short > 0 else 0
 
-        if (epoch + 1) % 10 == 0:
-            logger.info(f"E{epoch+1:3d}/{EPOCHS} | Acc:{acc:.3f} | SHORT={n_short} NO={n_no} | ShortPrec={sp:.0f}%")
+        if (epoch + 1) % 5 == 0:
+            logger.info(f"E{epoch+1:3d}/{EPOCHS} | TL:{train_loss:.4f} TAcc:{train_acc:.3f} | VL:{val_loss:.4f} VAcc:{acc:.3f} | SHORT={n_short} NO={n_no} | ShortPrec={sp:.0f}%")
 
-        if acc > best_acc and n_short >= 1 and n_no >= 1:
+        diverse = n_short >= 3 and n_no >= 3
+        if acc > best_acc and diverse:
             best_acc = acc
             best_epoch = epoch + 1
             patience_cnt = 0
@@ -360,18 +395,48 @@ def train():
                 'model_state_dict': model.state_dict(),
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
-                'model_type': 'cnn',
-                'short_tp_pct': SHORT_TP_PCT,
-                'short_sl_pct': SHORT_SL_PCT,
+                'model_type': 'deep_cnn',
+                'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+                'short_atr_sl_mult': SHORT_ATR_SL_MULT,
                 'epoch': epoch + 1,
                 'val_acc': acc,
             }, MODEL_DIR / 'XRP_short_model.pt')
+        elif acc > best_acc:
+            # Save even non-diverse model as fallback
+            best_acc = acc
+            best_epoch = epoch + 1
+            if not (MODEL_DIR / 'XRP_short_model.pt').exists():
+                torch.save({
+                    'model_state_dict': model.state_dict(),
+                    'feature_dim': FEATURE_DIM,
+                    'sequence_length': SEQUENCE_LENGTH,
+                    'model_type': 'deep_cnn',
+                    'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+                    'short_atr_sl_mult': SHORT_ATR_SL_MULT,
+                    'epoch': epoch + 1,
+                    'val_acc': acc,
+                }, MODEL_DIR / 'XRP_short_model.pt')
+            patience_cnt += 1
         else:
             patience_cnt += 1
 
         if patience_cnt >= PATIENCE:
             logger.info(f"Early stopping at epoch {epoch+1}")
             break
+
+    # Safety save current model if no checkpoint was saved
+    if not (MODEL_DIR / 'XRP_short_model.pt').exists():
+        logger.warning("No checkpoint saved during training! Saving final model state.")
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'feature_dim': FEATURE_DIM,
+            'sequence_length': SEQUENCE_LENGTH,
+            'model_type': 'deep_cnn',
+            'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+            'short_atr_sl_mult': SHORT_ATR_SL_MULT,
+            'epoch': 0,
+            'val_acc': 0,
+        }, MODEL_DIR / 'XRP_short_model.pt')
 
     # Final eval
     ckpt = torch.load(MODEL_DIR / 'XRP_short_model.pt')
@@ -386,13 +451,54 @@ def train():
             all_confs.extend(c.cpu().numpy())
             all_trues.extend(yb.numpy())
 
-    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
-
     logger.info(f"\n{'='*70}")
     logger.info(f"TRAINING COMPLETE | Best epoch: {best_epoch} | Best acc: {best_acc:.3f}")
     logger.info(f"{'='*70}")
-    logger.info(f"\nShort TP={SHORT_TP_PCT:.1%} | Short SL={SHORT_SL_PCT:.1%}")
-    logger.info(f"\nConfidence Analysis (SHORT signals):")
+
+    # === TEMPERATURE SCALING (Confidence Calibration) ===
+    logger.info(f"\nTemperature Scaling (Confidence Calibration)...")
+    all_logits_t, all_labels_t = [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            all_logits_t.append(logits.cpu())
+            all_labels_t.append(yb)
+    all_logits_t = torch.cat(all_logits_t)
+    all_labels_t = torch.cat(all_labels_t)
+
+    temperature = nn.Parameter(torch.ones(1) * 1.5)
+    temp_optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=100)
+    nll_criterion = nn.CrossEntropyLoss()
+
+    def temp_eval():
+        temp_optimizer.zero_grad()
+        loss = nll_criterion(all_logits_t / temperature, all_labels_t)
+        loss.backward()
+        return loss
+
+    temp_optimizer.step(temp_eval)
+    optimal_temp = temperature.item()
+    logger.info(f"  Optimal temperature: {optimal_temp:.4f}")
+
+    # Save temperature in checkpoint
+    ckpt_data = torch.load(MODEL_DIR / 'XRP_short_model.pt')
+    ckpt_data['temperature'] = optimal_temp
+    torch.save(ckpt_data, MODEL_DIR / 'XRP_short_model.pt')
+
+    # Calibrated confidence analysis
+    all_confs, all_dirs, all_trues = [], [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            calibrated_probs = torch.softmax(logits / optimal_temp, dim=1)
+            confidence, direction = torch.max(calibrated_probs, dim=1)
+            all_dirs.extend(direction.cpu().numpy())
+            all_confs.extend(confidence.cpu().numpy())
+            all_trues.extend(yb.numpy())
+
+    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
+
+    logger.info(f"\nCalibrated Confidence Analysis (SHORT signals):")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = (ad == 1) & (ac >= thresh)
         if mask.sum() > 0:

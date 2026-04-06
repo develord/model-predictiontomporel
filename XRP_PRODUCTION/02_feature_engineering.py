@@ -1,5 +1,5 @@
 """
-BTC Feature Engineering Script - Multi-Timeframe + Non-Technical
+XRP Feature Engineering Script - Multi-Timeframe + Non-Technical
 ================================================================
 Creates enriched features:
 - Multi-TF technical indicators (4h, 1d, 1w) like ETH/SOL
@@ -25,8 +25,13 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / 'data' / 'cache'
 
 CRYPTO = 'XRP'
-TP_PCT = 0.015
-SL_PCT = 0.0075
+# ATR-based labeling params (used as fallback multipliers)
+ATR_TP_MULT = 1.5   # TP = 1.5x ATR (balanced with SL)
+ATR_SL_MULT = 1.5   # SL = 1.5x ATR (symmetric = no directional bias)
+FIXED_TP_PCT = 0.012  # Fallback: 1.2% symmetric
+FIXED_SL_PCT = 0.012  # Fallback: 1.2% symmetric
+BASE_LOOKAHEAD = 10
+ATR_LOOKAHEAD_MULT = 0.7  # Adaptive: low vol = shorter, high vol = longer
 
 
 def create_technical_indicators(df, prefix=''):
@@ -175,22 +180,134 @@ def create_non_technical_features(df):
     return df
 
 
+def create_market_regime_features(df):
+    """Create market regime features: bull/bear/range detection, support/resistance, phase"""
+    logger.info("  Creating market regime features...")
+
+    # --- Trend regime via SMA crossovers ---
+    sma_50 = df['close'].rolling(50).mean()
+    sma_200 = df['close'].rolling(200).mean()
+    df['sma_50'] = sma_50
+    df['sma_200'] = sma_200
+    df['sma50_above_sma200'] = (sma_50 > sma_200).astype(int)
+    df['sma_spread_pct'] = (sma_50 / sma_200 - 1) * 100  # Distance between SMAs
+
+    # Bull/Bear/Range classifier (3-state)
+    ema_20 = df['close'].rolling(20).mean()
+    slope_20 = ema_20.pct_change(5) * 100  # 5-day slope of EMA20
+    df['regime_slope'] = slope_20
+    df['regime_bull'] = ((slope_20 > 0.5) & (df['close'] > sma_50)).astype(int)
+    df['regime_bear'] = ((slope_20 < -0.5) & (df['close'] < sma_50)).astype(int)
+    df['regime_range'] = ((slope_20.abs() <= 0.5)).astype(int)
+
+    # --- Support/Resistance via rolling pivot points ---
+    high_20 = df['high'].rolling(20).max()
+    low_20 = df['low'].rolling(20).min()
+    df['resistance_dist_pct'] = (high_20 / df['close'] - 1) * 100
+    df['support_dist_pct'] = (1 - low_20 / df['close']) * 100
+    df['sr_range_pct'] = (high_20 - low_20) / df['close'] * 100  # Range width
+
+    high_50 = df['high'].rolling(50).max()
+    low_50 = df['low'].rolling(50).min()
+    df['resistance_50_dist_pct'] = (high_50 / df['close'] - 1) * 100
+    df['support_50_dist_pct'] = (1 - low_50 / df['close']) * 100
+
+    # --- Market phase (Wyckoff-inspired) ---
+    # Accumulation: range-bound + increasing volume + near support
+    # Distribution: range-bound + increasing volume + near resistance
+    vol_trend = df['volume'].rolling(10).mean() / df['volume'].rolling(30).mean()
+    price_pos = (df['close'] - low_20) / (high_20 - low_20 + 1e-10)
+    df['volume_trend_ratio'] = vol_trend
+    df['price_position_in_range'] = price_pos
+
+    df['accumulation_score'] = (
+        (df['regime_range'] == 1).astype(float) *
+        (vol_trend > 1).astype(float) *
+        (price_pos < 0.3).astype(float)
+    )
+    df['distribution_score'] = (
+        (df['regime_range'] == 1).astype(float) *
+        (vol_trend > 1).astype(float) *
+        (price_pos > 0.7).astype(float)
+    )
+
+    # --- Regime change detection ---
+    # SMA cross events (recent)
+    sma_cross = (sma_50 > sma_200).astype(int).diff()
+    df['golden_cross_5d'] = sma_cross.rolling(5).sum().clip(0, 1)  # Golden cross in last 5 days
+    df['death_cross_5d'] = (-sma_cross).rolling(5).sum().clip(0, 1)
+
+    # Momentum regime shift
+    rsi = df['1d_rsi_14'] if '1d_rsi_14' in df.columns else ta.momentum.RSIIndicator(df['close'], 14).rsi()
+    df['rsi_regime_shift'] = rsi.diff(5)  # RSI change over 5 bars
+
+    # --- Volume-weighted trend strength ---
+    returns = df['close'].pct_change()
+    vol_weighted_return = (returns * df['volume']).rolling(10).sum() / df['volume'].rolling(10).sum()
+    df['vwap_trend_10'] = vol_weighted_return * 100
+
+    # Buying vs selling pressure
+    df['buying_pressure'] = ((df['close'] - df['low']) / (df['high'] - df['low'] + 1e-10))
+    df['selling_pressure'] = ((df['high'] - df['close']) / (df['high'] - df['low'] + 1e-10))
+    df['pressure_ratio'] = df['buying_pressure'] / (df['selling_pressure'] + 1e-10)
+
+    # --- Trend persistence ---
+    df['trend_consistency_10'] = returns.rolling(10).apply(lambda x: (x > 0).sum() / len(x), raw=True)
+    df['trend_consistency_20'] = returns.rolling(20).apply(lambda x: (x > 0).sum() / len(x), raw=True)
+
+    return df
+
+
 def create_labels(df):
-    """Create triple barrier labels"""
+    """Create regime-aware ATR-adaptive triple barrier labels.
+
+    Key insight: In strong bear market (price far below SMA50, RSI < 35),
+    suppress LONG TP labels so the model learns NOT to buy in bear.
+    This prevents the CNN from being overconfident on LONG in downtrends.
+    """
+    # Compute ATR for adaptive thresholds
+    atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+    median_atr = atr.rolling(50).median()
+
+    # Regime detection for label suppression
+    sma_50 = df['close'].rolling(50).mean()
+    sma_dist = (df['close'] / sma_50 - 1)  # Negative = below SMA50
+    rsi = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
+
     labels = []
+    n_suppressed = 0
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
 
         entry = df.iloc[i]['close']
-        tp = entry * (1 + TP_PCT)
-        sl = entry * (1 - SL_PCT)
+        current_atr = atr.iloc[i]
+
+        # ATR-based TP/SL (symmetric)
+        if pd.notna(current_atr) and current_atr > 0:
+            tp_dist = current_atr * ATR_TP_MULT
+            sl_dist = current_atr * ATR_SL_MULT
+        else:
+            tp_dist = entry * FIXED_TP_PCT
+            sl_dist = entry * FIXED_SL_PCT
+
+        tp = entry + tp_dist
+        sl = entry - sl_dist
+
+        # Adaptive lookahead
+        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else current_atr
+        if pd.notna(med) and med > 0:
+            vol_ratio = current_atr / med
+            lookahead = int(BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * ATR_LOOKAHEAD_MULT + 0.3)))
+        else:
+            lookahead = BASE_LOOKAHEAD
+        lookahead = max(5, min(20, lookahead))
 
         hit_tp = False
         hit_sl = False
 
-        for j in range(i+1, min(i+11, len(df))):
+        for j in range(i + 1, min(i + 1 + lookahead, len(df))):
             if df.iloc[j]['high'] >= tp:
                 hit_tp = True
                 break
@@ -198,7 +315,19 @@ def create_labels(df):
                 hit_sl = True
                 break
 
-        if hit_tp:
+        # Regime-aware label suppression:
+        # If in strong bear (price >10% below SMA50 OR RSI < 30), don't label as TP
+        # These are lucky bounces in bear, not real buy signals
+        cur_sma_dist = sma_dist.iloc[i] if pd.notna(sma_dist.iloc[i]) else 0
+        cur_rsi = rsi.iloc[i] if pd.notna(rsi.iloc[i]) else 50
+
+        is_strong_bear = (cur_sma_dist < -0.10) or (cur_rsi < 30 and cur_sma_dist < -0.05)
+
+        if hit_tp and is_strong_bear:
+            # Downweight but don't fully suppress — mark as TP but track for sample weighting
+            labels.append(1)
+            n_suppressed += 1
+        elif hit_tp:
             labels.append(1)
         elif hit_sl:
             labels.append(0)
@@ -206,6 +335,16 @@ def create_labels(df):
             labels.append(-1)
 
     df['label'] = labels
+
+    # Bear flag for sample weighting in training
+    sma_50_col = sma_50
+    rsi_col = rsi
+    df['is_strong_bear'] = (
+        (sma_dist < -0.10) | ((rsi_col < 30) & (sma_dist < -0.05))
+    ).astype(int)
+
+    logger.info(f"  Labels: TP in bear market (downweighted): {n_suppressed}")
+    logger.info(f"  Strong bear days: {df['is_strong_bear'].sum()}")
     return df
 
 
@@ -248,6 +387,9 @@ def build_features():
 
     # Non-technical features
     df_1d = create_non_technical_features(df_1d)
+
+    # Market regime features
+    df_1d = create_market_regime_features(df_1d)
 
     # Labels
     logger.info("  Creating labels...")

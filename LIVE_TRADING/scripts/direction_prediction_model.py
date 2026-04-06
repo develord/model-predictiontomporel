@@ -405,6 +405,52 @@ class DeepCNNShortModel(nn.Module):
         return direction, confidence
 
 
+class DeepCNNShortModelLN(nn.Module):
+    """LayerNorm variant of DeepCNNShortModel - used for LINK SHORT.
+    Uses LayerNorm instead of BatchNorm for training stability."""
+    def __init__(self, feature_dim, sequence_length=45, dropout=0.35):
+        super().__init__()
+        self.sequence_length = sequence_length
+        self.input_proj = nn.Sequential(
+            nn.Linear(feature_dim, 64), nn.LayerNorm(64), nn.ReLU(), nn.Dropout(dropout))
+        self.conv3 = nn.Conv1d(64, 32, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv1d(64, 32, kernel_size=5, padding=2)
+        self.conv7 = nn.Conv1d(64, 32, kernel_size=7, padding=3)
+        self.ln1 = nn.LayerNorm(96)
+        self.drop1 = nn.Dropout(dropout)
+        self.conv2 = nn.Sequential(nn.Conv1d(96, 48, kernel_size=3, padding=1))
+        self.ln2 = nn.LayerNorm(48)
+        self.drop2 = nn.Dropout(dropout)
+        self.attention = nn.Sequential(nn.Linear(48, 16), nn.Tanh(), nn.Linear(16, 1))
+        self.classifier = nn.Sequential(
+            nn.Linear(48, 32), nn.ReLU(), nn.Dropout(dropout * 0.5), nn.Linear(32, 2))
+
+    def forward(self, x):
+        x = self.input_proj(x)
+        x = x.permute(0, 2, 1)
+        c3 = F.relu(self.conv3(x))
+        c5 = F.relu(self.conv5(x))
+        c7 = F.relu(self.conv7(x))
+        x = torch.cat([c3, c5, c7], dim=1)
+        x = x.permute(0, 2, 1)
+        x = self.drop1(self.ln1(x))
+        x = x.permute(0, 2, 1)
+        x = F.relu(self.conv2(x))
+        x = x.permute(0, 2, 1)
+        x = self.drop2(self.ln2(x))
+        attn = F.softmax(self.attention(x), dim=1)
+        x = (x * attn).sum(dim=1)
+        return self.classifier(x)
+
+    def predict_direction(self, x):
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            probs = F.softmax(logits, dim=1)
+            confidence, direction = torch.max(probs, dim=1)
+        return direction, confidence
+
+
 class EnsembleDirectionModel(nn.Module):
     """
     Ensemble de modèles pour prédiction plus robuste

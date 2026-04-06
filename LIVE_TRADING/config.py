@@ -64,8 +64,11 @@ COINS = {
         'long_features': 'sol_features.json',
         'short_features': 'sol_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,
-        'short_conf': 0.55,   # Backtest original optimized
+        'long_conf': 0.55,    # V3: optimizer Q1 2026 (75.4% WR, +211.0%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.0,    # V3: meta pass-through
+        'short_meta_conf': 0.0,   # V3: meta pass-through
+        'v3': True,
         'data_start': '2020-08-01',
     },
     'DOGE': {
@@ -104,10 +107,11 @@ COINS = {
         'long_features': 'xrp_features.json',
         'short_features': 'xrp_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,
-        'short_conf': 0.68,   # Backtest original: très sélectif SHORT
-        'bear_sma50': -0.12,  # Per-coin override (backtest original)
-        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'long_conf': 0.75,    # V3: optimizer Q1 2026 (71.7% WR, +143.5%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.55,   # V3: XGBoost meta threshold LONG
+        'short_meta_conf': 0.0,   # V3: NoMeta SHORT
+        'v3': True,
         'data_start': '2018-01-01',
     },
     'LINK': {
@@ -119,10 +123,11 @@ COINS = {
         'long_features': 'link_features.json',
         'short_features': 'link_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.85,    # Backtest original: très sélectif LONG
-        'short_conf': 0.55,   # Backtest original optimized
-        'bear_sma50': -0.12,  # Per-coin override (backtest original)
-        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'long_conf': 0.55,    # V3: optimizer Q1 2026 (60.7% WR, +18.8%)
+        'short_conf': 0.55,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.52,   # V3: XGBoost meta threshold LONG
+        'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
+        'v3': True,
         'data_start': '2017-12-01',
     },
     'ADA': {
@@ -149,10 +154,11 @@ COINS = {
         'long_features': 'near_features.json',
         'short_features': 'near_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.70,
-        'short_conf': 0.52,   # Backtest original optimized
-        'bear_sma50': -0.12,  # Per-coin override (backtest original)
-        'bear_sma20': -0.05,  # Per-coin override (backtest original)
+        'long_conf': 0.65,    # V3: optimizer Q1 2026 (64.9% WR, +43.4%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.0,    # V3: meta pass-through
+        'short_meta_conf': 0.0,   # V3: meta pass-through
+        'v3': True,
         'data_start': '2020-10-01',
     },
 }
@@ -171,8 +177,8 @@ TRADING = {
 
 # Filter parameters
 FILTERS = {
-    'max_consecutive_losses': 3,
-    'cooldown_days': 5,
+    'max_consecutive_losses': 2,    # V3: optimizer best for all coins
+    'cooldown_days': 2,             # V3: optimizer best (was 5)
     'min_momentum_alignment': 1,    # At least 1/3 TFs bullish
     'max_volatility_regime': 2.5,
     'min_adx': 15,
