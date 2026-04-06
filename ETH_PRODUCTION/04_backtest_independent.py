@@ -1,5 +1,5 @@
 """
-BTC Independent LONG + SHORT Backtest
+ETH Independent LONG + SHORT Backtest
 =======================================
 Both models trade independently with their own filters.
 Only rule: no LONG and SHORT at the same time on same coin.
@@ -41,8 +41,8 @@ POSITION_SIZE = 0.95
 TRADING_FEE = 0.001
 SLIPPAGE = 0.0005
 USE_DYNAMIC_TP_SL = True
-TP_PCT = 0.015
-SL_PCT = 0.0075
+TP_PCT = 0.012  # Symmetric fallback (matches training)
+SL_PCT = 0.012
 
 # Thresholds (per direction)
 LONG_CONF = 0.60
@@ -53,7 +53,7 @@ MAX_CONSEC_LOSSES = 2
 COOLDOWN_DAYS = 5
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-03-24'
+BACKTEST_END = '2026-04-05'
 
 
 def load_model(model_dir, model_file):
@@ -102,20 +102,18 @@ def fetch_15min():
 
 
 def get_tp_sl(row, entry, direction, s_tp=0.020, s_sl=0.010):
+    """ATR-based symmetric TP/SL for both LONG and SHORT (matches training labels)"""
     atr = row.get('1d_atr_14', None)
+    ATR_MULT = 1.5  # Must match training: ATR_TP_MULT = ATR_SL_MULT = 1.5
+    if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
+        tp_m = min(max(ATR_MULT * atr / entry, 0.008), 0.04)
+        sl_m = tp_m  # Symmetric: same distance both sides
+    else:
+        tp_m, sl_m = 0.012, 0.012  # Fallback matches FIXED_TP/SL in training
     if direction == 'LONG':
-        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-            tp_m = min(max(atr / entry, 0.008), 0.03)
-            sl_m = tp_m * 0.5
-        else:
-            tp_m, sl_m = TP_PCT, SL_PCT
         return entry * (1 + tp_m), entry * (1 - sl_m)
     else:
-        # SHORT: model detects -2% drops, but execution uses wider SL (3%) for rebounds
-        # With x2 leverage: position halved, so risk stays same
-        exec_tp = max(s_tp, 0.03)   # At least 3% TP
-        exec_sl = max(s_sl, 0.03)   # At least 3% SL (survives intraday rebounds)
-        return entry * (1 - exec_tp), entry * (1 + exec_sl)
+        return entry * (1 - tp_m), entry * (1 + sl_m)
 
 
 def sim_trade(entry, date, df_15m, tp, sl, direction, max_d=20):
@@ -202,14 +200,14 @@ def backtest():
     logger.info(f"{'='*70}\n")
 
     # Load models
-    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'eth_cnn_model.pt')
+    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'ETH_direction_model.pt')
     short_model, short_seq, short_ckpt = load_model(SHORT_MODEL_DIR, 'ETH_short_model.pt')
     if not long_model or not short_model:
         logger.error("Missing model(s)")
         return
 
     # LONG features
-    with open(LONG_MODEL_DIR / 'eth_cnn_features.json') as f:
+    with open(BASE_DIR / 'required_features.json') as f:
         long_feature_cols = json.load(f)
 
     # SHORT features (may include bear-specific features)
@@ -219,12 +217,16 @@ def backtest():
     long_scaler = joblib.load(LONG_MODEL_DIR / 'feature_scaler.joblib')
     short_scaler = joblib.load(SHORT_MODEL_DIR / 'feature_scaler_short.joblib')
 
-    # Get SHORT TP/SL from checkpoint
+    # Get SHORT TP/SL from checkpoint (ATR-based now, use fixed fallbacks for execution)
     short_tp = short_ckpt.get('short_tp_pct', 0.020) if short_ckpt else 0.020
     short_sl = short_ckpt.get('short_sl_pct', 0.010) if short_ckpt else 0.010
+    # Temperature for calibrated confidence
+    long_temp = long_ckpt.get('temperature', 1.0) if long_ckpt else 1.0
+    short_temp = short_ckpt.get('temperature', 1.0) if short_ckpt else 1.0
     logger.info(f"SHORT params: TP={short_tp:.1%} drop, SL={short_sl:.1%} rise")
+    logger.info(f"Temperature: LONG={long_temp:.3f}, SHORT={short_temp:.3f}")
 
-    df = pd.read_csv(DATA_DIR / 'eth_multi_tf_merged.csv')
+    df = pd.read_csv(DATA_DIR / 'eth_features.csv')
     df['date'] = pd.to_datetime(df['date'])
 
     # Add bear features for SHORT model
@@ -278,17 +280,21 @@ def backtest():
         if position is not None:
             continue  # Already in a trade
 
-        # LONG prediction
+        # LONG prediction (with temperature-calibrated confidence)
         lx = torch.tensor(long_feat[wi-long_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            l_dir, l_conf = long_model.predict_direction(lx)
-        l_d, l_c = l_dir.item(), l_conf.item()
+            logits = long_model(lx)
+            probs = torch.softmax(logits / long_temp, dim=1)
+            l_c, l_d = torch.max(probs, dim=1)
+        l_d, l_c = l_d.item(), l_c.item()
 
-        # SHORT prediction
+        # SHORT prediction (with temperature-calibrated confidence)
         sx = torch.tensor(short_feat[wi-short_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            s_dir, s_conf = short_model.predict_direction(sx)
-        s_d, s_c = s_dir.item(), s_conf.item()
+            logits = short_model(sx)
+            probs = torch.softmax(logits / short_temp, dim=1)
+            s_c, s_d = torch.max(probs, dim=1)
+        s_d, s_c = s_d.item(), s_c.item()
 
         # Try LONG first (priority)
         if l_d == 1 and l_c >= LONG_CONF:

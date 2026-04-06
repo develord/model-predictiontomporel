@@ -31,10 +31,11 @@ COINS = {
         'long_features': 'btc_features.json',
         'short_features': 'btc_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.75,    # V3: strict in bear market (CNN+Meta model)
-        'short_conf': 0.55,   # V3: optimized with meta filtering
+        'long_conf': 0.55,    # V3: optimizer Q1 2026 (59.1% WR, +83.2%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
         'long_meta_conf': 0.45,   # V3: XGBoost meta threshold LONG
         'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
+        'v3': True,
         'data_start': '2017-01-01',
     },
     'ETH': {
@@ -46,8 +47,12 @@ COINS = {
         'long_features': 'eth_features.json',
         'short_features': 'eth_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,
-        'short_conf': 0.55,   # Backtest original optimized
+        'long_conf': 0.55,    # V3: optimizer Q1 2026 (62.5% WR, +46.2%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.0,    # V3: meta LONG pass-through
+        'short_meta_conf': 0.45,  # V3: XGBoost meta threshold SHORT
+        'v3': True,
+        'btc_influence': True,
         'data_start': '2018-01-01',
     },
     'SOL': {
@@ -165,7 +170,7 @@ TRADING = {
 
 # Filter parameters
 FILTERS = {
-    'max_consecutive_losses': 2,
+    'max_consecutive_losses': 3,
     'cooldown_days': 5,
     'min_momentum_alignment': 1,    # At least 1/3 TFs bullish
     'max_volatility_regime': 2.5,

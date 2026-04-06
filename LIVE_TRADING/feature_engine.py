@@ -7,9 +7,15 @@ Uses same ta library and logic as 02_feature_engineering.py
 import pandas as pd
 import numpy as np
 import ta
+import ccxt
 import logging
 
+from config import COINS
+
 logger = logging.getLogger(__name__)
+
+# Cache BTC data to avoid re-downloading for each ETH prediction
+_btc_cache = {'data': None, 'timestamp': None}
 
 
 def create_technical_indicators(df, prefix=''):
@@ -243,6 +249,94 @@ def add_bear_features(df):
     return df
 
 
+def create_btc_influence_features(df, buffers):
+    """Add BTC market influence features for non-BTC coins (e.g., ETH).
+    Downloads BTC 1d data and computes correlation, ratio, momentum, regime features.
+    Matches ETH_PRODUCTION/02_feature_engineering.py exactly."""
+    try:
+        # Get BTC 1d data from buffers
+        if 'BTC' in buffers and '1d' in buffers['BTC'] and len(buffers['BTC']['1d']) > 0:
+            btc_df = buffers['BTC']['1d'].copy()
+        else:
+            # Fallback: download BTC data via ccxt
+            import datetime
+            global _btc_cache
+            now = datetime.datetime.utcnow()
+            if _btc_cache['data'] is not None and _btc_cache['timestamp'] and (now - _btc_cache['timestamp']).seconds < 3600:
+                btc_df = _btc_cache['data']
+            else:
+                exchange = ccxt.binance({'enableRateLimit': True})
+                since = exchange.parse8601('2017-01-01T00:00:00Z')
+                ohlcv = exchange.fetch_ohlcv('BTC/USDT', '1d', since=since, limit=1000)
+                btc_df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                btc_df['date'] = pd.to_datetime(btc_df['timestamp'], unit='ms')
+                _btc_cache = {'data': btc_df, 'timestamp': now}
+
+        if 'date' not in btc_df.columns:
+            btc_df['date'] = pd.to_datetime(btc_df['timestamp'], unit='ms') if 'timestamp' in btc_df.columns else btc_df.index
+
+        # Prepare BTC columns
+        btc = btc_df[['date', 'close', 'volume']].copy()
+        btc.columns = ['date', 'btc_close', 'btc_volume']
+        btc = btc.sort_values('date')
+
+        # Merge with coin df
+        df = df.sort_values('date')
+        df = pd.merge_asof(df, btc, on='date', direction='backward')
+
+        # ETH/BTC ratio features
+        df['eth_btc_ratio'] = df['close'] / (df['btc_close'] + 1e-10)
+        df['eth_btc_ratio_ma10'] = df['eth_btc_ratio'].rolling(10).mean()
+        df['eth_btc_ratio_ma30'] = df['eth_btc_ratio'].rolling(30).mean()
+        df['eth_btc_ratio_zscore'] = (df['eth_btc_ratio'] - df['eth_btc_ratio'].rolling(30).mean()) / (df['eth_btc_ratio'].rolling(30).std() + 1e-10)
+        df['eth_btc_ratio_trend'] = df['eth_btc_ratio'].pct_change(5)
+
+        # Correlation features
+        df['eth_btc_corr_20'] = df['close'].pct_change().rolling(20).corr(df['btc_close'].pct_change())
+        df['eth_btc_corr_60'] = df['close'].pct_change().rolling(60).corr(df['btc_close'].pct_change())
+        df['eth_btc_corr_diff'] = df['eth_btc_corr_20'] - df['eth_btc_corr_60']
+
+        # BTC momentum
+        df['btc_momentum_5'] = df['btc_close'].pct_change(5)
+        df['btc_momentum_10'] = df['btc_close'].pct_change(10)
+        df['btc_momentum_20'] = df['btc_close'].pct_change(20)
+
+        # BTC regime
+        btc_sma50 = df['btc_close'].rolling(50).mean()
+        btc_sma200 = df['btc_close'].rolling(200).mean()
+        df['btc_above_sma50'] = (df['btc_close'] > btc_sma50).astype(int)
+        df['btc_above_sma200'] = (df['btc_close'] > btc_sma200).astype(int)
+        df['btc_sma_spread'] = (btc_sma50 / btc_sma200 - 1) * 100
+        df['btc_dist_from_sma50'] = (df['btc_close'] / btc_sma50 - 1)
+
+        # Relative volatility
+        df['eth_vol_20'] = df['close'].pct_change().rolling(20).std()
+        df['btc_vol_20'] = df['btc_close'].pct_change().rolling(20).std()
+        df['relative_volatility'] = df['eth_vol_20'] / (df['btc_vol_20'] + 1e-10)
+
+        # BTC RSI
+        df['btc_rsi_14'] = ta.momentum.RSIIndicator(df['btc_close'], window=14).rsi()
+
+        # Lead/lag
+        df['btc_lead_1d'] = df['btc_close'].pct_change(1).shift(1)
+        df['eth_lag_response'] = df['close'].pct_change(1) - df['btc_close'].pct_change(1)
+
+        # Beta
+        eth_ret = df['close'].pct_change()
+        btc_ret = df['btc_close'].pct_change()
+        df['eth_btc_beta_20'] = eth_ret.rolling(20).cov(btc_ret) / (btc_ret.rolling(20).var() + 1e-10)
+
+        # Volume correlation
+        df['vol_corr_20'] = df['volume'].rolling(20).corr(df['btc_volume'])
+
+        logger.info(f"Added {29} BTC influence features")
+        return df
+
+    except Exception as e:
+        logger.warning(f"BTC influence features failed: {e}")
+        return df
+
+
 def compute_features(buffers, coin, feature_cols, scaler, seq_len=30):
     """
     Compute features from OHLCV buffers for a coin.
@@ -280,15 +374,22 @@ def compute_features(buffers, coin, feature_cols, scaler, seq_len=30):
         df_1d = create_cross_tf_features(df_1d)
         df_1d = create_non_technical_features(df_1d)
 
-        # Market regime features (needed for BTC new model, harmless for others)
-        has_regime = any(c in feature_cols for c in ['sma_50', 'regime_bull', 'accumulation_score'])
+        cfg = COINS.get(coin, {})
+        is_v3 = cfg.get('v3', False)
+
+        # Market regime features — always for V3, conditional for others
+        has_regime = is_v3 or any(c in feature_cols for c in ['sma_50', 'regime_bull', 'accumulation_score'])
         if has_regime:
             df_1d = create_market_regime_features(df_1d)
 
-        # Bear features (needed for BTC SHORT model)
-        has_bear = any(c in feature_cols for c in ['price_above_sma10_pct', 'roc_5', 'consec_red'])
+        # Bear features — always for V3, conditional for others
+        has_bear = is_v3 or any(c in feature_cols for c in ['price_above_sma10_pct', 'roc_5', 'consec_red'])
         if has_bear:
             df_1d = add_bear_features(df_1d)
+
+        # BTC influence features for coins that need them (ETH)
+        if cfg.get('btc_influence', False):
+            df_1d = create_btc_influence_features(df_1d, buffers)
 
         # Clean
         for c in feature_cols:

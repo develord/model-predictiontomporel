@@ -282,13 +282,15 @@ class SignalGenerator:
         return True, "pass"
 
     def get_dynamic_tp_sl(self, raw_row, entry_price, direction='LONG', coin='BTC'):
-        """Calculate TP/SL based on ATR — symmetric for BTC (matches training), legacy for others"""
+        """Calculate TP/SL based on ATR — symmetric for V3 coins (matches training), legacy for others"""
         atr = None
         if '1d_atr_14' in raw_row.index and pd.notna(raw_row['1d_atr_14']):
             atr = raw_row['1d_atr_14']
 
-        # BTC uses symmetric ATR TP/SL (matches training labels: ATR_MULT=1.5)
-        if coin == 'BTC':
+        cfg = COINS.get(coin, {})
+
+        # V3 coins use symmetric ATR TP/SL (matches training labels: ATR_MULT=1.5)
+        if cfg.get('v3', False):
             ATR_MULT = 1.5
             if TRADING['use_dynamic_tp_sl'] and atr and atr > 0:
                 tp = min(max(ATR_MULT * atr / entry_price, 0.008), 0.04)

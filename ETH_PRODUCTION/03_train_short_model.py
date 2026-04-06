@@ -47,13 +47,16 @@ GRAD_CLIP = 0.5
 NOISE_STD = 0.01
 LABEL_SMOOTHING = 0.1
 
-# Train labels: detect -2% drops (model learns the pattern)
-# Execution SL will be wider (3-4%) via leverage in backtest
-SHORT_TP_PCT = 0.020
-SHORT_SL_PCT = 0.010
+# ATR-based SHORT labeling (symmetric = no bias)
+SHORT_ATR_TP_MULT = 1.5   # TP = 1.5x ATR drop
+SHORT_ATR_SL_MULT = 1.5   # SL = 1.5x ATR rise (symmetric)
+SHORT_FIXED_TP_PCT = 0.012
+SHORT_FIXED_SL_PCT = 0.012
+SHORT_BASE_LOOKAHEAD = 10
+SHORT_ATR_LOOKAHEAD_MULT = 0.7
 
-TRAIN_END = '2024-12-31'
-VAL_START = '2025-01-01'
+TRAIN_END = '2025-09-30'
+VAL_START = '2025-10-01'
 VAL_END = '2025-12-31'
 
 
@@ -191,16 +194,34 @@ def add_bear_features(df):
 
 
 def create_short_labels(df):
+    """ATR-adaptive SHORT labels (symmetric TP/SL)"""
+    import ta as ta_lib
+    atr = ta_lib.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
+    median_atr = atr.rolling(50).median()
     labels = []
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
         entry = df.iloc[i]['close']
-        tp = entry * (1 - SHORT_TP_PCT)
-        sl = entry * (1 + SHORT_SL_PCT)
+        cur_atr = atr.iloc[i]
+        if pd.notna(cur_atr) and cur_atr > 0:
+            tp_dist = cur_atr * SHORT_ATR_TP_MULT
+            sl_dist = cur_atr * SHORT_ATR_SL_MULT
+        else:
+            tp_dist = entry * SHORT_FIXED_TP_PCT
+            sl_dist = entry * SHORT_FIXED_SL_PCT
+        tp = entry - tp_dist   # SHORT TP = price drops
+        sl = entry + sl_dist   # SHORT SL = price rises
+        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else cur_atr
+        if pd.notna(med) and med > 0:
+            vol_ratio = cur_atr / med
+            lookahead = int(SHORT_BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * SHORT_ATR_LOOKAHEAD_MULT + 0.3)))
+        else:
+            lookahead = SHORT_BASE_LOOKAHEAD
+        lookahead = max(5, min(20, lookahead))
         hit_tp, hit_sl = False, False
-        for j in range(i+1, min(i+11, len(df))):
+        for j in range(i+1, min(i+1+lookahead, len(df))):
             if df.iloc[j]['low'] <= tp:
                 hit_tp = True
                 break
@@ -238,12 +259,12 @@ def train():
     logger.info(f"ETH SHORT CNN V2 TRAINING (DeepCNN + Bear Features)")
     logger.info(f"{'='*70}\n")
 
-    df = pd.read_csv(DATA_DIR / 'eth_multi_tf_merged.csv')
+    df = pd.read_csv(DATA_DIR / 'eth_features.csv')
     df['date'] = pd.to_datetime(df['date'])
     logger.info(f"Data: {len(df)} rows")
 
     # Load base features
-    with open(BASE_DIR / 'models' / 'eth_cnn_features.json') as f:
+    with open(BASE_DIR / 'required_features.json') as f:
         base_features = json.load(f)
 
     # Add bear-specific features
@@ -264,7 +285,7 @@ def train():
     logger.info(f"Features: {FEATURE_DIM} ({len(base_features)} base + {FEATURE_DIM - len(base_features)} bear)")
 
     # Labels
-    logger.info(f"Creating SHORT labels (TP={SHORT_TP_PCT:.1%} drop, SL={SHORT_SL_PCT:.1%} rise)...")
+    logger.info(f"Creating SHORT labels (ATR-based, TP={SHORT_ATR_TP_MULT}x ATR, SL={SHORT_ATR_SL_MULT}x ATR)...")
     df['label'] = create_short_labels(df)
 
     n1 = (df['label'] == 1).sum()
@@ -361,8 +382,8 @@ def train():
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
                 'model_type': 'cnn',
-                'short_tp_pct': SHORT_TP_PCT,
-                'short_sl_pct': SHORT_SL_PCT,
+                'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+                'short_atr_sl_mult': SHORT_ATR_SL_MULT,
                 'epoch': epoch + 1,
                 'val_acc': acc,
             }, MODEL_DIR / 'ETH_short_model.pt')
@@ -386,13 +407,54 @@ def train():
             all_confs.extend(c.cpu().numpy())
             all_trues.extend(yb.numpy())
 
-    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
-
     logger.info(f"\n{'='*70}")
     logger.info(f"TRAINING COMPLETE | Best epoch: {best_epoch} | Best acc: {best_acc:.3f}")
     logger.info(f"{'='*70}")
-    logger.info(f"\nShort TP={SHORT_TP_PCT:.1%} | Short SL={SHORT_SL_PCT:.1%}")
-    logger.info(f"\nConfidence Analysis (SHORT signals):")
+
+    # === TEMPERATURE SCALING (Confidence Calibration) ===
+    logger.info(f"\nTemperature Scaling (Confidence Calibration)...")
+    all_logits_t, all_labels_t = [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            all_logits_t.append(logits.cpu())
+            all_labels_t.append(yb)
+    all_logits_t = torch.cat(all_logits_t)
+    all_labels_t = torch.cat(all_labels_t)
+
+    temperature = nn.Parameter(torch.ones(1) * 1.5)
+    temp_optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=100)
+    nll_criterion = nn.CrossEntropyLoss()
+
+    def temp_eval():
+        temp_optimizer.zero_grad()
+        loss = nll_criterion(all_logits_t / temperature, all_labels_t)
+        loss.backward()
+        return loss
+
+    temp_optimizer.step(temp_eval)
+    optimal_temp = temperature.item()
+    logger.info(f"  Optimal temperature: {optimal_temp:.4f}")
+
+    # Save temperature in checkpoint
+    ckpt_data = torch.load(MODEL_DIR / 'ETH_short_model.pt')
+    ckpt_data['temperature'] = optimal_temp
+    torch.save(ckpt_data, MODEL_DIR / 'ETH_short_model.pt')
+
+    # Calibrated confidence analysis
+    all_confs, all_dirs, all_trues = [], [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            calibrated_probs = torch.softmax(logits / optimal_temp, dim=1)
+            confidence, direction = torch.max(calibrated_probs, dim=1)
+            all_dirs.extend(direction.cpu().numpy())
+            all_confs.extend(confidence.cpu().numpy())
+            all_trues.extend(yb.numpy())
+
+    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
+
+    logger.info(f"\nCalibrated Confidence Analysis (SHORT signals):")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = (ad == 1) & (ac >= thresh)
         if mask.sum() > 0:
