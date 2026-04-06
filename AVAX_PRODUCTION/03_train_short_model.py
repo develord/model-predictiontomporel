@@ -38,7 +38,7 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 30  # Match LONG model
+SEQUENCE_LENGTH = 45  # Longer sequence for distribution patterns
 BATCH_SIZE = 64
 EPOCHS = 250
 LEARNING_RATE = 0.0005
@@ -52,8 +52,8 @@ LABEL_SMOOTHING = 0.1
 SHORT_TP_PCT = 0.020
 SHORT_SL_PCT = 0.010
 
-TRAIN_END = '2024-12-31'
-VAL_START = '2025-01-01'
+TRAIN_END = '2025-06-30'
+VAL_START = '2025-07-01'
 VAL_END = '2025-12-31'
 
 
@@ -309,10 +309,9 @@ def train():
 
     # Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    from direction_prediction_model import CNNDirectionModel
-    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
+    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: DeepCNNShortModel (SHORT) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
@@ -386,13 +385,54 @@ def train():
             all_confs.extend(c.cpu().numpy())
             all_trues.extend(yb.numpy())
 
-    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
-
     logger.info(f"\n{'='*70}")
     logger.info(f"TRAINING COMPLETE | Best epoch: {best_epoch} | Best acc: {best_acc:.3f}")
     logger.info(f"{'='*70}")
-    logger.info(f"\nShort TP={SHORT_TP_PCT:.1%} | Short SL={SHORT_SL_PCT:.1%}")
-    logger.info(f"\nConfidence Analysis (SHORT signals):")
+
+    # === TEMPERATURE SCALING (Confidence Calibration) ===
+    logger.info(f"\nTemperature Scaling (Confidence Calibration)...")
+    all_logits_t, all_labels_t = [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            all_logits_t.append(logits.cpu())
+            all_labels_t.append(yb)
+    all_logits_t = torch.cat(all_logits_t)
+    all_labels_t = torch.cat(all_labels_t)
+
+    temperature = nn.Parameter(torch.ones(1) * 1.5)
+    temp_optimizer = optim.LBFGS([temperature], lr=0.01, max_iter=100)
+    nll_criterion = nn.CrossEntropyLoss()
+
+    def temp_eval():
+        temp_optimizer.zero_grad()
+        loss = nll_criterion(all_logits_t / temperature, all_labels_t)
+        loss.backward()
+        return loss
+
+    temp_optimizer.step(temp_eval)
+    optimal_temp = temperature.item()
+    logger.info(f"  Optimal temperature: {optimal_temp:.4f}")
+
+    # Save temperature in checkpoint
+    ckpt_data = torch.load(MODEL_DIR / 'AVAX_short_model.pt')
+    ckpt_data['temperature'] = optimal_temp
+    torch.save(ckpt_data, MODEL_DIR / 'AVAX_short_model.pt')
+
+    # Calibrated confidence analysis
+    all_confs, all_dirs, all_trues = [], [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            logits = model(xb.to(device))
+            calibrated_probs = torch.softmax(logits / optimal_temp, dim=1)
+            confidence, direction = torch.max(calibrated_probs, dim=1)
+            all_dirs.extend(direction.cpu().numpy())
+            all_confs.extend(confidence.cpu().numpy())
+            all_trues.extend(yb.numpy())
+
+    ad, ac, at = np.array(all_dirs), np.array(all_confs), np.array(all_trues)
+
+    logger.info(f"\nCalibrated Confidence Analysis (SHORT signals):")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = (ad == 1) & (ac >= thresh)
         if mask.sum() > 0:

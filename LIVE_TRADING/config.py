@@ -90,8 +90,9 @@ COINS = {
         'long_features': 'avax_features.json',
         'short_features': 'avax_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,
-        'short_conf': 0.55,   # Backtest original optimized
+        'long_conf': 0.60,    # V3: optimizer Q1 2026 (60.5% WR, +64.8%)
+        'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'v3': True,
         'data_start': '2020-09-01',
     },
     'XRP': {

@@ -1,5 +1,5 @@
 """
-BTC Independent LONG + SHORT Backtest
+AVAX Independent LONG + SHORT Backtest
 =======================================
 Both models trade independently with their own filters.
 Only rule: no LONG and SHORT at the same time on same coin.
@@ -21,7 +21,7 @@ from datetime import timedelta
 
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR / 'scripts'))
-from direction_prediction_model import CNNDirectionModel
+from direction_prediction_model import CNNDirectionModel, DeepCNNShortModel
 
 # Import DeepCNNShortModel from training script
 sys.path.insert(0, str(BASE_DIR))
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = BASE_DIR / 'data' / 'cache'
 LONG_MODEL_DIR = BASE_DIR / 'models'
 SHORT_MODEL_DIR = BASE_DIR / 'models_short'
+META_MODEL_DIR = BASE_DIR / 'models_meta'
 RESULTS_DIR = BASE_DIR / 'results'
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -41,19 +42,23 @@ POSITION_SIZE = 0.95
 TRADING_FEE = 0.001
 SLIPPAGE = 0.0005
 USE_DYNAMIC_TP_SL = True
-TP_PCT = 0.015
-SL_PCT = 0.0075
+TP_PCT = 0.012  # Symmetric fallback (matches training)
+SL_PCT = 0.012
 
-# Thresholds (per direction)
+# Thresholds (optimizer Q1 2026: 61.8% WR, +218.9%)
 LONG_CONF = 0.60
-SHORT_CONF = 0.55  # V6 model
+SHORT_CONF = 0.50
+
+# Meta thresholds (NoMeta = best for AVAX, set to 0 to pass-through)
+LONG_META_CONF = 0.0
+SHORT_META_CONF = 0.0
 
 # Filters
-MAX_CONSEC_LOSSES = 2
+MAX_CONSEC_LOSSES = 3
 COOLDOWN_DAYS = 5
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-03-24'
+BACKTEST_END = '2026-04-03'
 
 
 def load_model(model_dir, model_file):
@@ -65,10 +70,9 @@ def load_model(model_dir, model_file):
     seq_len = ckpt.get('sequence_length', 30)
     model_type = ckpt.get('model_type', 'cnn')
 
-    if False:  # DeepCNN removed - use CNNDirectionModel for all
-        # Import DeepCNNShortModel
-        spec = import_module('03_train_short_model')
-        model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+    is_deep = model_type == 'deep_cnn_short' or any('conv3_1' in k or 'conv9_1' in k for k in ckpt['model_state_dict'].keys())
+    if is_deep:
+        model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
     else:
         model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
 
@@ -102,20 +106,18 @@ def fetch_15min():
 
 
 def get_tp_sl(row, entry, direction, s_tp=0.020, s_sl=0.010):
+    """ATR-based symmetric TP/SL for both LONG and SHORT (matches training labels)"""
     atr = row.get('1d_atr_14', None)
+    ATR_MULT = 1.5  # Must match training: ATR_TP_MULT = ATR_SL_MULT = 1.5
+    if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
+        tp_m = min(max(ATR_MULT * atr / entry, 0.008), 0.04)
+        sl_m = tp_m  # Symmetric: same distance both sides
+    else:
+        tp_m, sl_m = 0.012, 0.012  # Fallback matches FIXED_TP/SL in training
     if direction == 'LONG':
-        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-            tp_m = min(max(atr / entry, 0.008), 0.03)
-            sl_m = tp_m * 0.5
-        else:
-            tp_m, sl_m = TP_PCT, SL_PCT
         return entry * (1 + tp_m), entry * (1 - sl_m)
     else:
-        # SHORT: model detects -2% drops, but execution uses wider SL (3%) for rebounds
-        # With x2 leverage: position halved, so risk stays same
-        exec_tp = max(s_tp, 0.03)   # At least 3% TP
-        exec_sl = max(s_sl, 0.03)   # At least 3% SL (survives intraday rebounds)
-        return entry * (1 - exec_tp), entry * (1 + exec_sl)
+        return entry * (1 - tp_m), entry * (1 + sl_m)
 
 
 def sim_trade(entry, date, df_15m, tp, sl, direction, max_d=20):
@@ -136,6 +138,44 @@ def sim_trade(entry, date, df_15m, tp, sl, direction, max_d=20):
     rem = df_15m[df_15m.index <= date + timedelta(days=max_d)]
     fp = rem.iloc[-1]['close'] if len(rem) > 0 else entry
     return {'type': 'EOD', 'price': fp, 'time': date + timedelta(days=max_d)}
+
+
+def build_meta_features(row, long_conf, long_dir, short_conf, short_dir,
+                        l_p0, l_p1, s_p0, s_p1):
+    """Build feature vector for meta-model from CNN outputs + market context"""
+    feat = {
+        'long_conf': long_conf, 'long_dir': long_dir,
+        'short_conf': short_conf, 'short_dir': short_dir,
+        'long_prob_spread': l_p1 - l_p0, 'short_prob_spread': s_p1 - s_p0,
+        'models_agree_bull': int(long_dir == 1 and short_dir == 0),
+        'models_agree_bear': int(long_dir == 0 and short_dir == 1),
+        'models_conflict': int(long_dir == 1 and short_dir == 1),
+        'models_neutral': int(long_dir == 0 and short_dir == 0),
+        'conf_diff': long_conf - short_conf,
+        'max_conf': max(long_conf, short_conf),
+        'min_conf': min(long_conf, short_conf),
+    }
+    market_cols = [
+        '1d_rsi_14', '1d_adx_14', '1d_atr_14', '1d_macd_histogram',
+        '1d_bb_width', '1d_stoch_k', '1d_cmf_20',
+        'volatility_regime', 'volume_trend', 'trend_score',
+        'distance_from_sma20', 'distance_from_sma50',
+        'price_position_20', 'price_position_50',
+        'regime_bull', 'regime_bear', 'regime_range',
+        'accumulation_score', 'distribution_score',
+        'vwap_trend_10', 'pressure_ratio',
+        'trend_consistency_10', 'trend_consistency_20',
+        'resistance_dist_pct', 'support_dist_pct',
+        'sma50_above_sma200', 'sma_spread_pct',
+        'rsi_bullish_count', 'macd_bullish_count',
+        'adx_mean', 'momentum_bullish_count',
+        'consecutive_up', 'consecutive_down',
+        'body_ratio', 'day_of_week',
+    ]
+    for col in market_cols:
+        val = row.get(col, np.nan) if col in row.index else np.nan
+        feat[col] = val if pd.notna(val) else 0.0
+    return feat
 
 
 def check_long_filters(row, consec, cool, date):
@@ -202,14 +242,14 @@ def backtest():
     logger.info(f"{'='*70}\n")
 
     # Load models
-    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'avax_cnn_model.pt')
+    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'AVAX_direction_model.pt')
     short_model, short_seq, short_ckpt = load_model(SHORT_MODEL_DIR, 'AVAX_short_model.pt')
     if not long_model or not short_model:
         logger.error("Missing model(s)")
         return
 
     # LONG features
-    with open(LONG_MODEL_DIR / 'avax_cnn_features.json') as f:
+    with open(BASE_DIR / 'required_features.json') as f:
         long_feature_cols = json.load(f)
 
     # SHORT features (may include bear-specific features)
@@ -219,10 +259,25 @@ def backtest():
     long_scaler = joblib.load(LONG_MODEL_DIR / 'feature_scaler.joblib')
     short_scaler = joblib.load(SHORT_MODEL_DIR / 'feature_scaler_short.joblib')
 
-    # Get SHORT TP/SL from checkpoint
+    # Get SHORT TP/SL from checkpoint (ATR-based now, use fixed fallbacks for execution)
     short_tp = short_ckpt.get('short_tp_pct', 0.020) if short_ckpt else 0.020
     short_sl = short_ckpt.get('short_sl_pct', 0.010) if short_ckpt else 0.010
+    # Temperature for calibrated confidence
+    long_temp = long_ckpt.get('temperature', 1.0) if long_ckpt else 1.0
+    short_temp = short_ckpt.get('temperature', 1.0) if short_ckpt else 1.0
     logger.info(f"SHORT params: TP={short_tp:.1%} drop, SL={short_sl:.1%} rise")
+    logger.info(f"Temperature: LONG={long_temp:.3f}, SHORT={short_temp:.3f}")
+
+    # Load meta models
+    meta_long, meta_short, meta_feature_cols = None, None, None
+    try:
+        meta_long = joblib.load(META_MODEL_DIR / 'AVAX_meta_long.joblib')
+        meta_short = joblib.load(META_MODEL_DIR / 'AVAX_meta_short.joblib')
+        with open(META_MODEL_DIR / 'meta_features.json') as f:
+            meta_feature_cols = json.load(f)
+        logger.info(f"Meta models loaded: LONG + SHORT ({len(meta_feature_cols)} features)")
+    except Exception as e:
+        logger.warning(f"Meta models not found, running without meta filter: {e}")
 
     df = pd.read_csv(DATA_DIR / 'avax_features.csv')
     df['date'] = pd.to_datetime(df['date'])
@@ -278,22 +333,40 @@ def backtest():
         if position is not None:
             continue  # Already in a trade
 
-        # LONG prediction
+        # LONG prediction (with temperature-calibrated confidence)
         lx = torch.tensor(long_feat[wi-long_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            l_dir, l_conf = long_model.predict_direction(lx)
-        l_d, l_c = l_dir.item(), l_conf.item()
+            logits = long_model(lx)
+            probs = torch.softmax(logits / long_temp, dim=1)
+            l_c, l_d = torch.max(probs, dim=1)
+        l_d, l_c = l_d.item(), l_c.item()
 
-        # SHORT prediction
+        # SHORT prediction (with temperature-calibrated confidence)
         sx = torch.tensor(short_feat[wi-short_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            s_dir, s_conf = short_model.predict_direction(sx)
-        s_d, s_c = s_dir.item(), s_conf.item()
+            logits = short_model(sx)
+            probs = torch.softmax(logits / short_temp, dim=1)
+            s_c, s_d = torch.max(probs, dim=1)
+        s_d, s_c = s_d.item(), s_c.item()
+
+        # Meta model filter
+        meta_long_prob, meta_short_prob = 1.0, 1.0
+        if meta_long is not None and meta_feature_cols is not None:
+            l_probs_full = torch.softmax(long_model(lx) / long_temp, dim=1).squeeze()
+            s_probs_full = torch.softmax(short_model(sx) / short_temp, dim=1).squeeze()
+            mf = build_meta_features(
+                row, l_c, l_d, s_c, s_d,
+                l_probs_full[0].item(), l_probs_full[1].item(),
+                s_probs_full[0].item(), s_probs_full[1].item()
+            )
+            mf_vec = np.array([[mf.get(c, 0) for c in meta_feature_cols]])
+            meta_long_prob = meta_long.predict_proba(mf_vec)[0][1]
+            meta_short_prob = meta_short.predict_proba(mf_vec)[0][1]
 
         # Try LONG first (priority)
         if l_d == 1 and l_c >= LONG_CONF:
             ok, reason = check_long_filters(row, long_consec, long_cool, date)
-            if ok:
+            if ok and meta_long_prob >= LONG_META_CONF:
                 entry = row['close'] * (1 + SLIPPAGE)
                 tp, sl = get_tp_sl(row, entry, 'LONG')
                 pos_val = capital * POSITION_SIZE
@@ -306,6 +379,7 @@ def backtest():
                 pnl = (res['price'] / entry - 1) * 100
 
                 trades.append({'date': date, 'dir': 'LONG', 'entry': entry, 'conf': l_c,
+                               'meta_prob': meta_long_prob,
                                'exit_type': res['type'], 'exit_price': res['price'],
                                'pnl': pnl, 'dur_h': (res['time'] - date).total_seconds() / 3600})
 
@@ -316,15 +390,18 @@ def backtest():
                 else:
                     long_consec = 0
 
-                logger.info(f"  {date.date()} | LONG  | Conf:{l_c:.0%} | {res['type']} | PnL:{pnl:+.2f}% | ${capital:.0f}")
+                logger.info(f"  {date.date()} | LONG  | Conf:{l_c:.0%} Meta:{meta_long_prob:.0%} | {res['type']} | PnL:{pnl:+.2f}% | ${capital:.0f}")
                 continue
             else:
-                long_filtered[reason] = long_filtered.get(reason, 0) + 1
+                if not ok:
+                    long_filtered[reason] = long_filtered.get(reason, 0) + 1
+                else:
+                    long_filtered['meta_filter'] = long_filtered.get('meta_filter', 0) + 1
 
         # Try SHORT if LONG didn't trigger
         if s_d == 1 and s_c >= SHORT_CONF:
             ok, reason = check_short_filters(row, short_consec, short_cool, date)
-            if ok:
+            if ok and meta_short_prob >= SHORT_META_CONF:
                 entry = row['close'] * (1 - SLIPPAGE)
                 tp, sl = get_tp_sl(row, entry, 'SHORT', short_tp, short_sl)
                 pos_val = capital * POSITION_SIZE
@@ -336,6 +413,7 @@ def backtest():
                 capital = capital - pos_val + exit_val - exit_val * TRADING_FEE
 
                 trades.append({'date': date, 'dir': 'SHORT', 'entry': entry, 'conf': s_c,
+                               'meta_prob': meta_short_prob,
                                'exit_type': res['type'], 'exit_price': res['price'],
                                'pnl': pnl, 'dur_h': (res['time'] - date).total_seconds() / 3600})
 
@@ -346,10 +424,13 @@ def backtest():
                 else:
                     short_consec = 0
 
-                logger.info(f"  {date.date()} | SHORT | Conf:{s_c:.0%} | {res['type']} | PnL:{pnl:+.2f}% | ${capital:.0f}")
+                logger.info(f"  {date.date()} | SHORT | Conf:{s_c:.0%} Meta:{meta_short_prob:.0%} | {res['type']} | PnL:{pnl:+.2f}% | ${capital:.0f}")
                 continue
             else:
-                short_filtered[reason] = short_filtered.get(reason, 0) + 1
+                if not ok:
+                    short_filtered[reason] = short_filtered.get(reason, 0) + 1
+                else:
+                    short_filtered['meta_filter'] = short_filtered.get('meta_filter', 0) + 1
 
     # Results
     logger.info(f"\n{'='*70}")

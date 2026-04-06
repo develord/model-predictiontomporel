@@ -52,8 +52,9 @@ class SignalGenerator:
         feat_dim = ckpt.get('feature_dim', 99)
         seq_len = ckpt.get('sequence_length', 30)
         model_type = ckpt.get('model_type', 'cnn')
+        is_deep = model_type == 'deep_cnn_short' or any('conv3_1' in k or 'conv9_1' in k for k in ckpt['model_state_dict'].keys())
 
-        if model_type == 'deep_cnn_short':
+        if is_deep:
             model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
         else:
             model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
