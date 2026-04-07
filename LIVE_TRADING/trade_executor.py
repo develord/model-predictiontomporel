@@ -167,13 +167,22 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: TP failed ({e})")
 
-            # 3. Stop Loss via Algo Order API (STOP_MARKET)
+            # 3. Stop Loss — try regular STOP_MARKET first, then algo fallback
             sl_order = None
             try:
-                sl_order = self._place_algo_order(symbol, 'SELL', 'STOP_MARKET', sl_price, quantity)
-                logger.info(f"{coin}: SL STOP_MARKET @ {sl_price} (Algo API)")
-            except Exception as e:
-                logger.warning(f"{coin}: SL failed ({e}), monitored by system")
+                sl_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol, 'side': 'SELL', 'type': 'STOP_MARKET',
+                    'stopPrice': sl_price, 'quantity': quantity,
+                    'reduceOnly': 'true',
+                })
+                logger.info(f"{coin}: SL STOP_MARKET @ {sl_price}")
+            except Exception as e1:
+                logger.warning(f"{coin}: SL regular failed ({e1}), trying algo...")
+                try:
+                    sl_order = self._place_algo_order(symbol, 'SELL', 'STOP_MARKET', sl_price, quantity)
+                    logger.info(f"{coin}: SL STOP_MARKET @ {sl_price} (Algo API)")
+                except Exception as e2:
+                    logger.error(f"{coin}: SL FAILED both methods ({e2}), monitored by system only!")
 
             return {
                 'coin': coin,
@@ -251,13 +260,22 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"{coin}: SHORT TP failed ({e})")
 
-            # SL via Algo Order API (STOP_MARKET)
+            # SL — try regular STOP_MARKET first, then algo fallback
             sl_order = None
             try:
-                sl_order = self._place_algo_order(symbol, 'BUY', 'STOP_MARKET', sl_price, quantity)
-                logger.info(f"{coin}: SHORT SL STOP_MARKET @ {sl_price} (Algo API)")
-            except Exception as e:
-                logger.warning(f"{coin}: SHORT SL failed ({e}), monitored by system")
+                sl_order = self.exchange.fapiPrivatePostOrder({
+                    'symbol': symbol, 'side': 'BUY', 'type': 'STOP_MARKET',
+                    'stopPrice': sl_price, 'quantity': quantity,
+                    'reduceOnly': 'true',
+                })
+                logger.info(f"{coin}: SHORT SL STOP_MARKET @ {sl_price}")
+            except Exception as e1:
+                logger.warning(f"{coin}: SHORT SL regular failed ({e1}), trying algo...")
+                try:
+                    sl_order = self._place_algo_order(symbol, 'BUY', 'STOP_MARKET', sl_price, quantity)
+                    logger.info(f"{coin}: SHORT SL STOP_MARKET @ {sl_price} (Algo API)")
+                except Exception as e2:
+                    logger.error(f"{coin}: SHORT SL FAILED both methods ({e2}), monitored by system only!")
 
             return {
                 'coin': coin, 'pair': pair, 'side': 'SHORT',

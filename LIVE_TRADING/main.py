@@ -78,10 +78,59 @@ class LiveTradingSystem:
         logger.info(f"Balance: ${self.executor.get_balance():.2f}")
         logger.info(f"{self.pos_mgr.get_summary()}")
 
+        # Reconcile local state with exchange before anything
+        self._sync_exchange_state()
+
         # Resync TP/SL orders for existing positions
         self._resync_orders()
 
         return True
+
+    def _sync_exchange_state(self):
+        """Reconcile local state with Binance positions on startup"""
+        logger.info("\n[SYNC] Reconciling local state with Binance...")
+        try:
+            exchange_positions = self.executor.get_open_positions()
+
+            # Close local positions that don't exist on Binance
+            for coin in list(self.pos_mgr.positions.keys()):
+                symbol = COINS[coin]['pair'].replace('/', '')
+                if symbol not in exchange_positions:
+                    pos = self.pos_mgr.positions[coin]
+                    direction = pos.get('direction', 'LONG')
+                    current_price = self.executor.get_price(coin)
+                    if current_price:
+                        tp = pos.get('tp_price', 0)
+                        sl = pos.get('sl_price', 0)
+                        if direction == 'SHORT':
+                            exit_type = 'TP' if current_price <= tp else ('SL' if current_price >= sl else 'CLOSED')
+                        else:
+                            exit_type = 'TP' if current_price >= tp else ('SL' if current_price <= sl else 'CLOSED')
+                        self.pos_mgr.close_position(coin, exit_type, current_price)
+                        self.signal_gen.record_trade_result(coin, direction, exit_type)
+                        logger.info(f"[SYNC] {coin}: Position gone from exchange, closed as {exit_type}")
+
+            # Warn about exchange positions not in local state
+            for symbol, epos in exchange_positions.items():
+                coin_name = None
+                for cn, cfg in COINS.items():
+                    if cfg['pair'].replace('/', '') == symbol:
+                        coin_name = cn
+                        break
+                if coin_name and coin_name not in self.pos_mgr.positions:
+                    logger.warning(f"[SYNC] {coin_name}: Found on exchange ({epos['side']} {epos['contracts']}@{epos['entry_price']}) but NOT in local state! Closing orphan.")
+                    try:
+                        side = 'SELL' if epos['side'] == 'LONG' else 'BUY'
+                        self.executor.exchange.fapiPrivatePostOrder({
+                            'symbol': symbol, 'side': side, 'type': 'MARKET',
+                            'quantity': epos['contracts'], 'reduceOnly': 'true',
+                        })
+                        self.executor.cancel_orders(coin_name)
+                        logger.info(f"[SYNC] {coin_name}: Orphan position closed")
+                    except Exception as e:
+                        logger.error(f"[SYNC] {coin_name}: Failed to close orphan: {e}")
+        except Exception as e:
+            logger.error(f"[SYNC] Exchange sync failed: {e}")
 
     def _resync_orders(self):
         """Ensure TP/SL orders exist on Binance for all open positions"""
@@ -108,30 +157,33 @@ class LiveTradingSystem:
                     open_orders = []
 
                 tp_side = 'SELL' if direction == 'LONG' else 'BUY'
+                sl_side = 'SELL' if direction == 'LONG' else 'BUY'
                 has_tp = any(o.get('type') == 'LIMIT' and o.get('side') == tp_side for o in open_orders)
 
-                # Check algo orders for SL
-                has_sl = False
-                try:
-                    import requests as req
-                    import hmac, hashlib, time
-                    from config import BINANCE_TESTNET_KEY, BINANCE_TESTNET_SECRET
-                    params = {
-                        'symbol': symbol,
-                        'timestamp': int(time.time() * 1000),
-                        'recvWindow': 10000,
-                    }
-                    qs = '&'.join(f'{k}={v}' for k, v in params.items())
-                    sig = hmac.new(BINANCE_TESTNET_SECRET.encode(), qs.encode(), hashlib.sha256).hexdigest()
-                    params['signature'] = sig
-                    headers = {'X-MBX-APIKEY': BINANCE_TESTNET_KEY}
-                    r = req.get('https://demo-fapi.binance.com/fapi/v1/openAlgoOrders', params=params, headers=headers)
-                    if r.status_code == 200:
-                        algos = r.json() if isinstance(r.json(), list) else r.json().get('orders', [])
-                        sl_side = 'SELL' if direction == 'LONG' else 'BUY'
-                        has_sl = any(a.get('symbol') == symbol and a.get('side') == sl_side and a.get('algoStatus') == 'NEW' for a in algos)
-                except:
-                    pass
+                # Check for SL in regular orders (STOP_MARKET) and algo orders
+                has_sl = any(o.get('type') in ('STOP_MARKET', 'STOP') and o.get('side') == sl_side for o in open_orders)
+
+                if not has_sl:
+                    # Also check algo orders
+                    try:
+                        import requests as req
+                        import hmac, hashlib, time
+                        from config import BINANCE_TESTNET_KEY, BINANCE_TESTNET_SECRET
+                        params = {
+                            'symbol': symbol,
+                            'timestamp': int(time.time() * 1000),
+                            'recvWindow': 10000,
+                        }
+                        qs = '&'.join(f'{k}={v}' for k, v in params.items())
+                        sig = hmac.new(BINANCE_TESTNET_SECRET.encode(), qs.encode(), hashlib.sha256).hexdigest()
+                        params['signature'] = sig
+                        headers = {'X-MBX-APIKEY': BINANCE_TESTNET_KEY}
+                        r = req.get('https://demo-fapi.binance.com/fapi/v1/openAlgoOrders', params=params, headers=headers)
+                        if r.status_code == 200:
+                            algos = r.json() if isinstance(r.json(), list) else r.json().get('orders', [])
+                            has_sl = any(a.get('symbol') == symbol and a.get('side') == sl_side and a.get('algoStatus') == 'NEW' for a in algos)
+                    except:
+                        pass
 
                 # Recreate missing orders
                 if not has_tp:
@@ -146,12 +198,21 @@ class LiveTradingSystem:
                         logger.warning(f"[SYNC] {coin}: TP recreate failed: {e}")
 
                 if not has_sl:
+                    sl_side = 'SELL' if direction == 'LONG' else 'BUY'
                     try:
-                        sl_side = 'SELL' if direction == 'LONG' else 'BUY'
-                        self.executor._place_algo_order(symbol, sl_side, 'STOP_MARKET', sl_price, quantity)
+                        self.executor.exchange.fapiPrivatePostOrder({
+                            'symbol': symbol, 'side': sl_side, 'type': 'STOP_MARKET',
+                            'stopPrice': sl_price, 'quantity': quantity,
+                            'reduceOnly': 'true',
+                        })
                         logger.info(f"[SYNC] {coin}: SL recreated @ {sl_price}")
-                    except Exception as e:
-                        logger.warning(f"[SYNC] {coin}: SL recreate failed: {e}")
+                    except Exception as e1:
+                        logger.warning(f"[SYNC] {coin}: SL regular failed ({e1}), trying algo...")
+                        try:
+                            self.executor._place_algo_order(symbol, sl_side, 'STOP_MARKET', sl_price, quantity)
+                            logger.info(f"[SYNC] {coin}: SL recreated @ {sl_price} (Algo)")
+                        except Exception as e2:
+                            logger.error(f"[SYNC] {coin}: SL recreate FAILED: {e2}")
 
                 if has_tp and has_sl:
                     logger.info(f"[SYNC] {coin}: TP/SL OK")
@@ -159,14 +220,29 @@ class LiveTradingSystem:
             except Exception as e:
                 logger.error(f"[SYNC] {coin}: Error: {e}")
 
+    def _has_exchange_position(self, coin):
+        """Check if position exists on Binance (not just local state)"""
+        try:
+            symbol = COINS[coin]['pair'].replace('/', '')
+            positions = self.executor.exchange.fapiPrivateV2GetPositionRisk()
+            for p in positions:
+                if p.get('symbol') == symbol and float(p.get('positionAmt', 0)) != 0:
+                    return True
+        except Exception as e:
+            logger.warning(f"{coin}: Exchange position check failed: {e}")
+        return False
+
     async def on_daily_candle_close(self, coin):
         """Called when a 1d candle closes - generate signal and trade"""
         logger.info(f"\n{'='*50}")
         logger.info(f"DAILY CLOSE: {coin} @ {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 
-        # Skip if already in position
+        # Skip if already in position (local state OR exchange)
         if self.pos_mgr.has_position(coin):
-            logger.info(f"{coin}: Already in position, skipping")
+            logger.info(f"{coin}: Already in position (local), skipping")
+            return
+        if self._has_exchange_position(coin):
+            logger.info(f"{coin}: Already in position (exchange), skipping")
             return
 
         # Compute LONG features
@@ -359,7 +435,14 @@ class LiveTradingSystem:
                             'timeInForce': 'GTC', 'reduceOnly': 'true',
                         })
                         sl_side = 'SELL' if direction == 'LONG' else 'BUY'
-                        self.executor._place_algo_order(sym, sl_side, 'STOP_MARKET', new_sl_rounded, pos['quantity'])
+                        try:
+                            self.executor.exchange.fapiPrivatePostOrder({
+                                'symbol': sym, 'side': sl_side, 'type': 'STOP_MARKET',
+                                'stopPrice': new_sl_rounded, 'quantity': pos['quantity'],
+                                'reduceOnly': 'true',
+                            })
+                        except:
+                            self.executor._place_algo_order(sym, sl_side, 'STOP_MARKET', new_sl_rounded, pos['quantity'])
 
                         pos['sl_price'] = new_sl_rounded
                         self.pos_mgr._save_state()
