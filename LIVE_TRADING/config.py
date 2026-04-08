@@ -161,6 +161,38 @@ COINS = {
         'v3': True,
         'data_start': '2020-10-01',
     },
+    'DOT': {
+        'pair': 'DOT/USDT',
+        'long_model': 'dot_cnn_model.pt',
+        'short_model': 'dot_short_cnn_model.pt',
+        'long_scaler': 'dot_feature_scaler.joblib',
+        'short_scaler': 'dot_short_feature_scaler.joblib',
+        'long_features': 'dot_features.json',
+        'short_features': 'dot_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.55,    # CNN LONG confidence threshold
+        'short_conf': 0.55,   # CNN SHORT confidence threshold
+        'long_meta_conf': 0.0,    # Meta pass-through
+        'short_meta_conf': 0.0,   # Meta pass-through
+        'v3': True,
+        'data_start': '2020-08-20',
+    },
+    'FIL': {
+        'pair': 'FIL/USDT',
+        'long_model': 'fil_cnn_model.pt',
+        'short_model': 'fil_short_cnn_model.pt',
+        'long_scaler': 'fil_feature_scaler.joblib',
+        'short_scaler': 'fil_short_feature_scaler.joblib',
+        'long_features': 'fil_features.json',
+        'short_features': 'fil_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.60,    # Backtest Q1 2026: 60% WR, +5.64%
+        'short_conf': 0.55,   # CNN SHORT confidence threshold
+        'long_meta_conf': 0.0,    # Meta pass-through
+        'short_meta_conf': 0.0,   # Meta pass-through
+        'v3': True,
+        'data_start': '2020-10-15',
+    },
 }
 
 # Trading parameters

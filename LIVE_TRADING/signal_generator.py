@@ -237,6 +237,11 @@ class SignalGenerator:
             if raw_row['distance_from_sma20'] < sma20_thresh:
                 return False, "bear_sma20"
 
+        # V2: Weekly momentum filter - block LONG if weekly trend is strongly bearish
+        if '1w_momentum_5' in raw_row.index and pd.notna(raw_row['1w_momentum_5']):
+            if raw_row['1w_momentum_5'] < -0.10:
+                return False, "weak_weekly"
+
         if 'volatility_regime' in raw_row.index and pd.notna(raw_row['volatility_regime']):
             if raw_row['volatility_regime'] > f['max_volatility_regime']:
                 return False, "high_vol"
