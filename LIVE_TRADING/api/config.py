@@ -240,7 +240,7 @@ MONITOR_TIMEFRAME = '15m'    # Monitor TP/SL on 15min candles
 
 # API Settings (used by main.py)
 class settings:
-    HOST = '0.0.0.0'
+    HOST = '127.0.0.1'  # localhost only — nginx reverse proxy handles external HTTPS
     PORT = 8080
     DEBUG = False
     CORS_ORIGINS = ['*']
