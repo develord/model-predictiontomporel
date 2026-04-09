@@ -242,9 +242,7 @@ MONITOR_TIMEFRAME = '15m'    # Monitor TP/SL on 15min candles
 class settings:
     HOST = '127.0.0.1'  # localhost only — nginx reverse proxy handles external HTTPS
     PORT = 8080
-    DEBUG = False
-    CORS_ORIGINS = ['*']
-    API_KEY = os.getenv('API_KEY', '098e53ee1afd8cbb5079c7ed6321f7f3')
-    JWT_SECRET = os.getenv('JWT_SECRET', 'crypto-adviser-secret-key-2026')
-    JWT_ALGORITHM = 'HS256'
-    JWT_EXPIRATION = 3600
+    DEBUG = os.getenv('API_DEBUG', 'false').lower() == 'true'
+    CORS_ORIGINS = [
+        'https://crypto-trading-bot.duckdns.org',
+    ]

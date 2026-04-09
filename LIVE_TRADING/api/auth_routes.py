@@ -34,6 +34,9 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 BINANCE_CLIENT_ID = os.getenv("BINANCE_CLIENT_ID", "")
 BINANCE_CLIENT_SECRET = os.getenv("BINANCE_CLIENT_SECRET", "")
 
+if not GOOGLE_CLIENT_ID:
+    logger.warning("GOOGLE_CLIENT_ID not set — Google audience check disabled (insecure)")
+
 
 def _build_auth_response(user: dict) -> dict:
     """Build JWT tokens and auth response for a user"""

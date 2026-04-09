@@ -162,26 +162,26 @@ async def add_credits(user_id: int, amount: int, tx_type: str, crypto: str = Non
 
 
 async def spend_credits(user_id: int, amount: int, crypto: str) -> int | None:
-    """Spend credits to view a prediction. Returns new balance or None if insufficient."""
+    """Spend credits to view a prediction. Returns new balance or None if insufficient.
+    Uses atomic UPDATE with WHERE balance >= amount to prevent race conditions."""
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        cursor = await db.execute("SELECT balance FROM credits WHERE user_id = ?", (user_id,))
-        row = await cursor.fetchone()
-        current = row[0] if row else 0
-
-        if current < amount:
+        # Atomic: only deduct if balance is sufficient (prevents double-spend)
+        cursor = await db.execute(
+            "UPDATE credits SET balance = balance - ?, last_updated = ? WHERE user_id = ? AND balance >= ?",
+            (amount, now, user_id, amount)
+        )
+        if cursor.rowcount == 0:
             return None
 
-        await db.execute(
-            "UPDATE credits SET balance = balance - ?, last_updated = ? WHERE user_id = ?",
-            (amount, now, user_id)
-        )
         await db.execute(
             "INSERT INTO credit_transactions (user_id, amount, type, crypto, timestamp) VALUES (?, ?, 'spend_view', ?, ?)",
             (user_id, -amount, crypto, now)
         )
         await db.commit()
-        return current - amount
+        row_cursor = await db.execute("SELECT balance FROM credits WHERE user_id = ?", (user_id,))
+        row = await row_cursor.fetchone()
+        return row[0] if row else 0
 
 
 async def get_last_earn_time(user_id: int) -> str | None:

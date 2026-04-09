@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from datetime import datetime
 import logging
 import time as _time
+from collections import defaultdict
 
 from config import settings
 from models import (
@@ -37,7 +38,7 @@ from database import init_db
 from predictions_cnn import CNNPredictionService
 try:
     from backtest_service import get_backtest_service
-except:
+except ImportError:
     get_backtest_service = None
 
 # Configuration logging
@@ -47,35 +48,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# Initialize FastAPI app (Swagger disabled in production)
 app = FastAPI(
-    title="Crypto Predictions API",
-    description="""
-    API de prédictions pour cryptomonnaies utilisant des modèles V11 TEMPORAL.
-
-    ## Features
-    - Prédictions en temps réel (BUY/HOLD)
-    - Modèles multi-timeframe (1d + 4h + 1h)
-    - Triple Barrier: TP=+1.5%, SL=-0.75%
-    - Thresholds optimaux (BTC=0.37, ETH=0.35, SOL=0.35)
-    - Performance validée: +43.38% ROI portfolio
-    - Documentation Swagger interactive
-
-    ## Cryptos supportées
-    - Bitcoin (BTC) - ROI +22.56%
-    - Ethereum (ETH) - ROI +45.07%
-    - Solana (SOL) - ROI +64.48%
-    """,
-    version="11.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    contact={
-        "name": "Crypto Adviser",
-        "url": "https://github.com/crypto-adviser",
-    },
-    license_info={
-        "name": "MIT",
-    }
+    title="CryptoXHunter API",
+    description="AI-Powered Crypto Trading Signals",
+    version="3.0.0",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
 
 # CORS configuration - restricted for mobile-only API
@@ -92,26 +72,63 @@ app.include_router(auth_router)
 app.include_router(credits_router)
 
 
+# ============================================================================
+# RATE LIMITING (in-memory, per-IP)
+# ============================================================================
+_rate_limits: dict = defaultdict(list)  # {ip: [timestamps]}
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMITS = {
+    '/auth/': 10,          # 10 auth attempts per minute
+    '/api/credits/earn': 6,  # 6 earn requests per minute
+    '/api/predictions/': 30, # 30 predictions per minute
+    '_default': 60,          # 60 requests per minute for other endpoints
+}
+
+
+def _get_rate_limit(path: str) -> int:
+    for prefix, limit in RATE_LIMITS.items():
+        if prefix != '_default' and path.startswith(prefix):
+            return limit
+    return RATE_LIMITS['_default']
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Per-IP rate limiting"""
+    client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
+    path = request.url.path
+    limit = _get_rate_limit(path)
+    now = _time.time()
+    key = f"{client_ip}:{path.split('/')[1] if '/' in path[1:] else path}"
+
+    # Clean old entries and check limit
+    _rate_limits[key] = [t for t in _rate_limits[key] if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_limits[key]) >= limit:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Too many requests", "retry_after": RATE_LIMIT_WINDOW}
+        )
+    _rate_limits[key].append(now)
+
+    return await call_next(request)
+
+
 # API Key middleware - blocks requests without valid app API key
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
-    """Verify X-API-Key header on all requests except health and docs"""
-    exempt_paths = ["/health", "/docs", "/redoc", "/openapi.json", "/", "/api/analysis", "/api/news"]
+    """Verify X-API-Key header on all requests except health and public endpoints"""
     path = request.url.path
+    exempt_exact = {"/health", "/"}
+    exempt_prefixes = ("/api/analysis/", "/api/news")
 
-    # Only health/docs exempt — auth endpoints still need API key
-    if path in exempt_paths or path.startswith('/api/analysis') or path.startswith('/api/news'):
+    if path in exempt_exact or path == "/api/analysis" or path == "/api/news" or any(path.startswith(p) for p in exempt_prefixes):
         return await call_next(request)
 
     api_key = request.headers.get("X-API-Key")
     if not api_key or not verify_api_key(api_key):
         return JSONResponse(
             status_code=403,
-            content={
-                "error": "Forbidden",
-                "detail": "Invalid or missing API key",
-                "timestamp": datetime.now().isoformat()
-            }
+            content={"error": "Forbidden"}
         )
 
     return await call_next(request)
@@ -360,7 +377,7 @@ async def get_prediction(crypto: str, current_user: dict = Depends(get_current_u
         logger.error(f"Error predicting {crypto}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate prediction: {str(e)}"
+            detail="Failed to generate prediction"
         )
 
 
@@ -404,7 +421,7 @@ async def get_current_price(crypto: str, current_user: dict = Depends(get_curren
         logger.error(f"Error getting price for {crypto}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get price: {str(e)}"
+            detail="Failed to get price"
         )
 
 
@@ -505,19 +522,19 @@ async def run_backtest(request: BacktestRequest, current_user: dict = Depends(ge
         logger.error(f"File not found: {e}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
+            detail="Required data not found"
         )
     except ValueError as e:
         logger.error(f"Invalid parameters: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail="Invalid parameters"
         )
     except Exception as e:
         logger.error(f"Backtest error for {crypto}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Backtest failed: {str(e)}"
+            detail="Backtest failed"
         )
 
 
@@ -542,11 +559,11 @@ async def get_technical_analysis(crypto: str):
         result = await prediction_service.get_technical_analysis(crypto)
         ANALYSIS_CACHE[crypto] = {"data": result, "timestamp": now}
         return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Crypto not found")
     except Exception as e:
         logger.error(f"Analysis error for {crypto}: {e}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Analysis failed")
 
 
 # ============================================================================
@@ -666,7 +683,10 @@ async def get_crypto_news():
     # Source 2: CoinTelegraph RSS (fallback)
     if not articles:
         try:
-            import xml.etree.ElementTree as ET
+            try:
+                import defusedxml.ElementTree as ET
+            except ImportError:
+                import xml.etree.ElementTree as ET
             async with aiohttp.ClientSession() as session:
                 url = "https://cointelegraph.com/rss"
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -717,15 +737,11 @@ async def get_crypto_news():
 # Exception handlers
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error(f"Unhandled exception: {exc}")
+    """Global exception handler — never leak internal details"""
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
+        content={"error": "Internal server error"}
     )
 
 
