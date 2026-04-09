@@ -321,7 +321,18 @@ class TradeExecutor:
                 'symbol': symbol, 'side': side, 'type': 'MARKET',
                 'quantity': quantity, 'reduceOnly': 'true',
             })
-            logger.info(f"{coin}: Position closed ({side}) @ {order.get('avgPrice', 'N/A')}")
+            avg_price = float(order.get('avgPrice', 0) or 0)
+            # Binance Demo bug: avgPrice may return 0 even on success — retry from trade history
+            if avg_price == 0:
+                time.sleep(1)
+                try:
+                    trades = self.exchange.fapiPrivateGetUserTrades({'symbol': symbol, 'limit': 1})
+                    if trades:
+                        avg_price = float(trades[-1].get('price', 0))
+                except Exception:
+                    pass
+            logger.info(f"{coin}: Position closed ({side}) @ {avg_price if avg_price else 'N/A'}")
+            order['_fill_price'] = avg_price
             return order
         except Exception as e:
             logger.error(f"{coin}: Close position failed: {e}")

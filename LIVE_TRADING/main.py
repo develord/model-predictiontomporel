@@ -45,6 +45,10 @@ class LiveTradingSystem:
         self.signal_gen = SignalGenerator()
         self.executor = TradeExecutor()
         self.pos_mgr = PositionManager()
+        # Pre-fill today's date for all coins so bot never trades on startup
+        # Only a real new 1d candle close (next day) will trigger trades
+        _today = datetime.utcnow().strftime('%Y-%m-%d')
+        self._daily_traded_date = {coin: _today for coin in COINS.keys()}
 
     def setup(self):
         """Initialize all components"""
@@ -237,6 +241,12 @@ class LiveTradingSystem:
         logger.info(f"\n{'='*50}")
         logger.info(f"DAILY CLOSE: {coin} @ {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
 
+        # Skip if already processed today's daily signal (prevents re-trading on restart)
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        if self._daily_traded_date.get(coin) == today:
+            logger.info(f"{coin}: Daily signal already processed today ({today}), skipping")
+            return
+
         # Skip if already in position (local state OR exchange)
         if self.pos_mgr.has_position(coin):
             logger.info(f"{coin}: Already in position (local), skipping")
@@ -312,6 +322,7 @@ class LiveTradingSystem:
                     if order:
                         order['direction'] = 'LONG'
                         self.pos_mgr.open_position(coin, order)
+                        self._daily_traded_date[coin] = datetime.utcnow().strftime('%Y-%m-%d')
                         return
                 else:
                     logger.info(f"{coin}: LONG blocked by META{meta_str}")
@@ -333,6 +344,7 @@ class LiveTradingSystem:
                     if order:
                         order['direction'] = 'SHORT'
                         self.pos_mgr.open_position(coin, order)
+                        self._daily_traded_date[coin] = datetime.utcnow().strftime('%Y-%m-%d')
                         return
                 else:
                     logger.info(f"{coin}: SHORT blocked by META{meta_str}")
@@ -383,10 +395,14 @@ class LiveTradingSystem:
             # 1. Close at 90% of TP target
             if tp_total_pct > 0 and current_pnl_pct >= tp_total_pct * 0.90:
                 logger.info(f"{coin}: PROXIMITY CLOSE | PnL: {current_pnl_pct:+.2f}% (90% of TP {tp_total_pct:.1f}%)")
-                self.executor.close_position(coin, pos['quantity'], direction)
-                self.executor.cancel_orders(coin)
-                self.pos_mgr.close_position(coin, 'TP_TRAIL', close)
-                self.signal_gen.record_trade_result(coin, direction, 'TP')
+                order = self.executor.close_position(coin, pos['quantity'], direction)
+                fill_price = float((order or {}).get('_fill_price', 0) or 0)
+                if fill_price > 0:
+                    self.executor.cancel_orders(coin)
+                    self.pos_mgr.close_position(coin, 'TP_TRAIL', fill_price)
+                    self.signal_gen.record_trade_result(coin, direction, 'TP')
+                else:
+                    logger.warning(f"{coin}: PROXIMITY CLOSE fill_price=0, position NOT removed from state")
                 return
 
             # 2. Trailing SL adjustments
@@ -455,10 +471,14 @@ class LiveTradingSystem:
         if direction == 'LONG':
             if low <= sl_price:
                 logger.info(f"{coin}: LONG SL HIT (low={low} <= sl={sl_price})")
-                self.executor.close_position(coin, pos['quantity'], 'LONG')
-                self.executor.cancel_orders(coin)
-                self.pos_mgr.close_position(coin, 'SL', sl_price)
-                self.signal_gen.record_trade_result(coin, 'LONG', 'SL')
+                order = self.executor.close_position(coin, pos['quantity'], 'LONG')
+                fill_price = float((order or {}).get('_fill_price', 0) or 0)
+                if fill_price > 0:
+                    self.executor.cancel_orders(coin)
+                    self.pos_mgr.close_position(coin, 'SL', fill_price)
+                    self.signal_gen.record_trade_result(coin, 'LONG', 'SL')
+                else:
+                    logger.warning(f"{coin}: LONG SL fill_price=0, position NOT removed from state")
             elif high >= tp_price:
                 logger.info(f"{coin}: LONG TP HIT")
                 self.pos_mgr.close_position(coin, 'TP', tp_price)
@@ -466,10 +486,14 @@ class LiveTradingSystem:
         else:
             if high >= sl_price:
                 logger.info(f"{coin}: SHORT SL HIT (high={high} >= sl={sl_price})")
-                self.executor.close_position(coin, pos['quantity'], 'SHORT')
-                self.executor.cancel_orders(coin)
-                self.pos_mgr.close_position(coin, 'SL', sl_price)
-                self.signal_gen.record_trade_result(coin, 'SHORT', 'SL')
+                order = self.executor.close_position(coin, pos['quantity'], 'SHORT')
+                fill_price = float((order or {}).get('_fill_price', 0) or 0)
+                if fill_price > 0:
+                    self.executor.cancel_orders(coin)
+                    self.pos_mgr.close_position(coin, 'SL', fill_price)
+                    self.signal_gen.record_trade_result(coin, 'SHORT', 'SL')
+                else:
+                    logger.warning(f"{coin}: SHORT SL fill_price=0, position NOT removed from state")
             elif low <= tp_price:
                 logger.info(f"{coin}: SHORT TP HIT")
                 self.pos_mgr.close_position(coin, 'TP', tp_price)
