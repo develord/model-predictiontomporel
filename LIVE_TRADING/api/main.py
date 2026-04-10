@@ -119,7 +119,7 @@ async def api_key_middleware(request: Request, call_next):
     """Verify X-API-Key header on all requests except health and public endpoints"""
     path = request.url.path
     exempt_exact = {"/health", "/"}
-    exempt_prefixes = ("/api/analysis/", "/api/news")
+    exempt_prefixes = ("/api/analysis/", "/api/news", "/api/credits", "/auth/")
 
     if path in exempt_exact or path == "/api/analysis" or path == "/api/news" or any(path.startswith(p) for p in exempt_prefixes):
         return await call_next(request)
@@ -583,7 +583,7 @@ PREDICTION_CACHE_DURATION = 14400  # 4 hours
 
 # Analysis cache: 4 hours
 ANALYSIS_CACHE: dict = {}
-ANALYSIS_CACHE_DURATION = 14400  # 4 hours
+ANALYSIS_CACHE_DURATION = 3600  # 1 hour
 
 # Keyword-based sentiment classifier (fast, no ML model needed on server)
 BULLISH_KEYWORDS = [
