@@ -31,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger('LIVE')
 
+import os
+import requests as _requests
+
 from config import COINS, SEQUENCE_LENGTH
 from data_manager import DataManager
 from feature_engine import compute_features
@@ -89,6 +92,22 @@ class LiveTradingSystem:
         self._resync_orders()
 
         return True
+
+    def _notify_signal(self, coin, direction, confidence, price, tp_pct, sl_pct):
+        """POST signal to API for push notifications"""
+        api_url = os.getenv('API_WEBHOOK_URL', 'http://127.0.0.1:8080/api/notifications/signal-webhook')
+        secret = os.getenv('BOT_WEBHOOK_SECRET', '')
+        if not secret:
+            return
+        try:
+            _requests.post(api_url, json={
+                'coin': coin, 'direction': direction,
+                'confidence': confidence, 'price': price,
+                'tp_pct': tp_pct, 'sl_pct': sl_pct,
+            }, headers={'X-Bot-Secret': secret}, timeout=5)
+            logger.info(f"{coin}: Push notification sent ({direction})")
+        except Exception as e:
+            logger.warning(f"{coin}: Push notification failed: {e}")
 
     def _sync_exchange_state(self):
         """Reconcile local state with Binance positions on startup"""
@@ -323,6 +342,7 @@ class LiveTradingSystem:
                         order['direction'] = 'LONG'
                         self.pos_mgr.open_position(coin, order)
                         self._daily_traded_date[coin] = datetime.utcnow().strftime('%Y-%m-%d')
+                        self._notify_signal(coin, 'LONG', l_conf, current_price, tp_pct, sl_pct)
                         return
                 else:
                     logger.info(f"{coin}: LONG blocked by META{meta_str}")
@@ -345,6 +365,7 @@ class LiveTradingSystem:
                         order['direction'] = 'SHORT'
                         self.pos_mgr.open_position(coin, order)
                         self._daily_traded_date[coin] = datetime.utcnow().strftime('%Y-%m-%d')
+                        self._notify_signal(coin, 'SHORT', s_conf, current_price, tp_pct, sl_pct)
                         return
                 else:
                     logger.info(f"{coin}: SHORT blocked by META{meta_str}")
