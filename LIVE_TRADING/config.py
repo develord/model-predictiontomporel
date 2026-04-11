@@ -237,3 +237,12 @@ WS_MAX_RECONNECT_DELAY = 60
 # Prediction schedule
 PREDICTION_TIMEFRAME = '1d'  # Predict on daily close
 MONITOR_TIMEFRAME = '15m'    # Monitor TP/SL on 15min candles
+
+# API Settings (used by main.py)
+class settings:
+    HOST = '127.0.0.1'  # localhost only — nginx reverse proxy handles external HTTPS
+    PORT = 8080
+    DEBUG = os.getenv('API_DEBUG', 'false').lower() == 'true'
+    CORS_ORIGINS = [
+        'https://crypto-trading-bot.duckdns.org',
+    ]
