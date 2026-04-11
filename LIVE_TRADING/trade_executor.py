@@ -365,4 +365,4 @@ class TradeExecutor:
             return open_pos
         except Exception as e:
             logger.error(f"Fetch positions error: {e}")
-            return {}
+            return None  # None = error, {} = no positions

@@ -58,7 +58,7 @@ MAX_CONSEC_LOSSES = 3
 COOLDOWN_DAYS = 5
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-04-03'
+BACKTEST_END = '2026-04-11'
 
 
 def load_model(model_dir, model_file):

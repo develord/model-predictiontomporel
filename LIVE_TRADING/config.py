@@ -71,19 +71,6 @@ COINS = {
         'v3': True,
         'data_start': '2020-08-01',
     },
-    'DOGE': {
-        'pair': 'DOGE/USDT',
-        'long_model': 'doge_cnn_model.pt',
-        'short_model': 'doge_short_cnn_model.pt',
-        'long_scaler': 'doge_feature_scaler.joblib',
-        'short_scaler': 'doge_short_feature_scaler.joblib',
-        'long_features': 'doge_features.json',
-        'short_features': 'doge_short_features.json',
-        'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,
-        'short_conf': 0.55,   # Backtest original optimized
-        'data_start': '2019-07-01',
-    },
     'AVAX': {
         'pair': 'AVAX/USDT',
         'long_model': 'avax_cnn_model.pt',
@@ -129,21 +116,6 @@ COINS = {
         'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
         'v3': True,
         'data_start': '2017-12-01',
-    },
-    'ADA': {
-        'pair': 'ADA/USDT',
-        'long_model': 'ada_cnn_model.pt',
-        'short_model': 'ada_short_cnn_model.pt',
-        'long_scaler': 'ada_feature_scaler.joblib',
-        'short_scaler': 'ada_short_feature_scaler.joblib',
-        'long_features': 'ada_features.json',
-        'short_features': 'ada_short_features.json',
-        'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.65,
-        'short_conf': 0.55,   # Backtest original optimized
-        'bear_sma50': -0.12,  # Per-coin override (backtest original)
-        'bear_sma20': -0.05,  # Per-coin override (backtest original)
-        'data_start': '2018-04-01',
     },
     'NEAR': {
         'pair': 'NEAR/USDT',

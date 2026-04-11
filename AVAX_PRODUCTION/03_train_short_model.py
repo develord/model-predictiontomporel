@@ -1,12 +1,15 @@
 """
-AVAX SHORT CNN Training Script V2
+AVAX SHORT CNN Training Script V3
 ==================================
-Improved SHORT model with:
-- Better TP/SL params (2% TP, 1% SL) for balanced labels
-- Bear-specific features added to existing features
-- Deeper CNN architecture
-- Longer sequence (45 days) to capture distribution patterns
-- More aggressive augmentation
+SHORT model using CNNDirectionModel (same architecture as LONG).
+DeepCNNShortModel was too complex for AVAX's limited data (~1700 samples)
+and failed to converge. CNNDirectionModel with seq=30 converges reliably.
+
+Features:
+- Bear-specific features added to base features
+- TP/SL: 2% drop TP, 1% rise SL (fixed labels)
+- Data augmentation 2x + noise
+- Temperature calibration on validation set
 
 Usage:
     python 03_train_short_model.py
@@ -31,6 +34,8 @@ from typing import Tuple
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR / 'scripts'))
 
+from direction_prediction_model import CNNDirectionModel
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -38,107 +43,22 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 45  # Longer sequence for distribution patterns
+SEQUENCE_LENGTH = 30   # Shorter seq — better convergence with limited AVAX data
 BATCH_SIZE = 64
-EPOCHS = 250
-LEARNING_RATE = 0.0005
-PATIENCE = 40
+EPOCHS = 200
+LEARNING_RATE = 0.0015  # Higher LR for CNNDirectionModel
+PATIENCE = 35
 GRAD_CLIP = 0.5
-NOISE_STD = 0.01
+NOISE_STD = 0.015
 LABEL_SMOOTHING = 0.1
 
 # Train labels: detect -2% drops (model learns the pattern)
-# Execution SL will be wider (3-4%) via leverage in backtest
 SHORT_TP_PCT = 0.020
 SHORT_SL_PCT = 0.010
 
 TRAIN_END = '2025-06-30'
 VAL_START = '2025-07-01'
 VAL_END = '2025-12-31'
-
-
-class DeepCNNShortModel(nn.Module):
-    """Deeper CNN specifically designed for SHORT detection.
-    More conv layers to detect complex distribution/top patterns."""
-
-    def __init__(self, feature_dim, sequence_length=45, dropout=0.35):
-        super().__init__()
-
-        # Feature projection
-        self.input_proj = nn.Sequential(
-            nn.Linear(feature_dim, 96),
-            nn.BatchNorm1d(sequence_length),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-
-        # Multi-scale conv block 1
-        self.conv3_1 = nn.Conv1d(96, 48, kernel_size=3, padding=1)
-        self.conv5_1 = nn.Conv1d(96, 48, kernel_size=5, padding=2)
-        self.conv9_1 = nn.Conv1d(96, 48, kernel_size=9, padding=4)  # Wider for longer patterns
-        self.bn1 = nn.BatchNorm1d(144)
-        self.drop1 = nn.Dropout(dropout)
-
-        # Conv block 2
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(144, 96, kernel_size=3, padding=1),
-            nn.BatchNorm1d(96),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-
-        # Conv block 3 (deeper)
-        self.conv3 = nn.Sequential(
-            nn.Conv1d(96, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
-            nn.GELU(),
-            nn.Dropout(dropout * 0.7)
-        )
-
-        # Temporal attention
-        self.attention = nn.Sequential(
-            nn.Linear(64, 24),
-            nn.Tanh(),
-            nn.Linear(24, 1)
-        )
-
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(64, 48),
-            nn.GELU(),
-            nn.Dropout(dropout * 0.5),
-            nn.Linear(48, 24),
-            nn.GELU(),
-            nn.Linear(24, 2)
-        )
-
-    def forward(self, x):
-        x = self.input_proj(x)  # (B, T, 96)
-        x = x.permute(0, 2, 1)  # (B, 96, T)
-
-        c3 = F.gelu(self.conv3_1(x))
-        c5 = F.gelu(self.conv5_1(x))
-        c9 = F.gelu(self.conv9_1(x))
-        x = torch.cat([c3, c5, c9], dim=1)  # (B, 144, T)
-        x = self.bn1(x)
-        x = self.drop1(x)
-
-        x = self.conv2(x)  # (B, 96, T)
-        x = self.conv3(x)  # (B, 64, T)
-
-        x = x.permute(0, 2, 1)  # (B, T, 64)
-        attn = F.softmax(self.attention(x), dim=1)
-        x = (x * attn).sum(dim=1)  # (B, 64)
-
-        return self.classifier(x)
-
-    def predict_direction(self, x):
-        self.eval()
-        with torch.no_grad():
-            logits = self.forward(x)
-            probs = F.softmax(logits, dim=1)
-            confidence, direction = torch.max(probs, dim=1)
-        return direction, confidence
 
 
 def add_bear_features(df):
@@ -225,7 +145,7 @@ def build_sequences(X, y, seq_len):
     return np.array(seqs), np.array(labels)
 
 
-def augment(X, y, noise=0.01, copies=3):
+def augment(X, y, noise=0.015, copies=2):
     ax, ay = [X], [y]
     for _ in range(copies):
         ax.append(X + np.random.normal(0, noise, X.shape).astype(np.float32))
@@ -294,9 +214,9 @@ def train():
     n_0, n_1 = (train_labels == 0).sum(), (train_labels == 1).sum()
     logger.info(f"Train: {len(train_seqs)} (No={n_0}, Short={n_1}) | Val: {len(val_seqs)}")
 
-    # Augment (3x)
-    train_seqs_a, train_labels_a = augment(train_seqs, train_labels, NOISE_STD, copies=3)
-    logger.info(f"After augmentation: {len(train_seqs_a)} (4x)")
+    # Augment (3x total = original + 2 copies)
+    train_seqs_a, train_labels_a = augment(train_seqs, train_labels, NOISE_STD, copies=2)
+    logger.info(f"After augmentation: {len(train_seqs_a)} (3x)")
 
     # Class weights
     w0 = len(train_labels) / (2 * n_0) if n_0 > 0 else 1.0
@@ -307,15 +227,15 @@ def train():
     val_loader = DataLoader(TensorDataset(torch.FloatTensor(val_seqs), torch.LongTensor(val_labels)),
                             batch_size=BATCH_SIZE)
 
-    # Model
+    # Model — CNNDirectionModel (lighter, converges better with AVAX's limited data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
+    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel (SHORT) | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
 
-    criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
+    criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
 
     best_acc, patience_cnt, best_epoch = 0, 0, 0
 
@@ -359,7 +279,7 @@ def train():
                 'model_state_dict': model.state_dict(),
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
-                'model_type': 'cnn',
+                'model_type': 'cnn',  # CNNDirectionModel (not deep_cnn_short)
                 'short_tp_pct': SHORT_TP_PCT,
                 'short_sl_pct': SHORT_SL_PCT,
                 'epoch': epoch + 1,
@@ -380,7 +300,9 @@ def train():
     all_confs, all_dirs, all_trues = [], [], []
     with torch.no_grad():
         for xb, yb in val_loader:
-            d, c = model.predict_direction(xb.to(device))
+            logits = model(xb.to(device))
+            probs = torch.softmax(logits, dim=1)
+            c, d = torch.max(probs, dim=1)
             all_dirs.extend(d.cpu().numpy())
             all_confs.extend(c.cpu().numpy())
             all_trues.extend(yb.numpy())

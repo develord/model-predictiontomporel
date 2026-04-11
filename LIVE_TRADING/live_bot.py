@@ -114,6 +114,9 @@ class LiveTradingSystem:
         logger.info("\n[SYNC] Reconciling local state with Binance...")
         try:
             exchange_positions = self.executor.get_open_positions()
+            if exchange_positions is None:
+                logger.warning("[SYNC] Startup sync skipped — exchange API error")
+                return
 
             # Close local positions that don't exist on Binance
             for coin in list(self.pos_mgr.positions.keys()):
@@ -526,6 +529,8 @@ class LiveTradingSystem:
             await asyncio.sleep(300)  # Every 5 minutes
             try:
                 exchange_positions = self.executor.get_open_positions()
+                if exchange_positions is None:
+                    continue  # API error, skip this sync cycle
 
                 for coin in list(self.pos_mgr.positions.keys()):
                     pair_symbol = COINS[coin]['pair'].replace('/', '')  # BTC/USDT -> BTCUSDT

@@ -47,91 +47,8 @@ SHORT_MODEL_DIR = BASE_DIR / 'models_short'
 LONG_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 SHORT_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# ============================================================
-# DeepCNNShortModel (inline, same architecture as BTC SHORT)
-# ============================================================
-class DeepCNNShortModel(nn.Module):
-    """Deeper CNN specifically designed for SHORT detection.
-    More conv layers to detect complex distribution/top patterns."""
-
-    def __init__(self, feature_dim, sequence_length=45, dropout=0.35):
-        super().__init__()
-
-        # Feature projection
-        self.input_proj = nn.Sequential(
-            nn.Linear(feature_dim, 96),
-            nn.BatchNorm1d(sequence_length),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-
-        # Multi-scale conv block 1
-        self.conv3_1 = nn.Conv1d(96, 48, kernel_size=3, padding=1)
-        self.conv5_1 = nn.Conv1d(96, 48, kernel_size=5, padding=2)
-        self.conv9_1 = nn.Conv1d(96, 48, kernel_size=9, padding=4)
-        self.bn1 = nn.BatchNorm1d(144)
-        self.drop1 = nn.Dropout(dropout)
-
-        # Conv block 2
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(144, 96, kernel_size=3, padding=1),
-            nn.BatchNorm1d(96),
-            nn.GELU(),
-            nn.Dropout(dropout)
-        )
-
-        # Conv block 3 (deeper)
-        self.conv3 = nn.Sequential(
-            nn.Conv1d(96, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
-            nn.GELU(),
-            nn.Dropout(dropout * 0.7)
-        )
-
-        # Temporal attention
-        self.attention = nn.Sequential(
-            nn.Linear(64, 24),
-            nn.Tanh(),
-            nn.Linear(24, 1)
-        )
-
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(64, 48),
-            nn.GELU(),
-            nn.Dropout(dropout * 0.5),
-            nn.Linear(48, 24),
-            nn.GELU(),
-            nn.Linear(24, 2)
-        )
-
-    def forward(self, x):
-        x = self.input_proj(x)  # (B, T, 96)
-        x = x.permute(0, 2, 1)  # (B, 96, T)
-
-        c3 = F.gelu(self.conv3_1(x))
-        c5 = F.gelu(self.conv5_1(x))
-        c9 = F.gelu(self.conv9_1(x))
-        x = torch.cat([c3, c5, c9], dim=1)  # (B, 144, T)
-        x = self.bn1(x)
-        x = self.drop1(x)
-
-        x = self.conv2(x)  # (B, 96, T)
-        x = self.conv3(x)  # (B, 64, T)
-
-        x = x.permute(0, 2, 1)  # (B, T, 64)
-        attn = F.softmax(self.attention(x), dim=1)
-        x = (x * attn).sum(dim=1)  # (B, 64)
-
-        return self.classifier(x)
-
-    def predict_direction(self, x):
-        self.eval()
-        with torch.no_grad():
-            logits = self.forward(x)
-            probs = F.softmax(logits, dim=1)
-            confidence, direction = torch.max(probs, dim=1)
-        return direction, confidence, probs
+# NOTE: SHORT model uses CNNDirectionModel (imported above)
+# DeepCNNShortModel was too complex for AVAX's limited data and failed to converge
 
 
 # ============================================================
@@ -148,35 +65,32 @@ FIXED_SL_PCT = 0.012
 BASE_LOOKAHEAD = 10
 ATR_LOOKAHEAD_MULT = 0.7
 
-# ATR labeling (SHORT) - symmetric
-SHORT_ATR_TP_MULT = 1.5
-SHORT_ATR_SL_MULT = 1.5
-SHORT_FIXED_TP_PCT = 0.012
-SHORT_FIXED_SL_PCT = 0.012
-SHORT_BASE_LOOKAHEAD = 10
-SHORT_ATR_LOOKAHEAD_MULT = 0.7
+# SHORT labeling (fixed %, matches dev 03_train_short_model.py)
+SHORT_TP_PCT = 0.020   # 2% drop = profitable short
+SHORT_SL_PCT = 0.010   # 1% rise = stop loss
+SHORT_LOOKAHEAD = 10
 
 # ============================================================
 # LONG CNN params
 # ============================================================
-LONG_FIXED_EPOCHS = 18     # Best epoch from calibrated run (stopped 53, best 18)
+LONG_FIXED_EPOCHS = 24     # Best epoch from calibrated run (stopped 59, best 24)
 LONG_BATCH_SIZE = 64
 LONG_LR = 0.0015
 LONG_NOISE_STD = 0.015
 LONG_LABEL_SMOOTHING = 0.1
 LONG_AUGMENT_COPIES = 2    # 3x total (original + 2 copies)
-LONG_TEMPERATURE = 2.062   # From AVAX calibrated run
+LONG_TEMPERATURE = 2.068   # From AVAX calibrated run 2026-04-11
 
 # ============================================================
-# SHORT CNN params
+# SHORT CNN params (CNNDirectionModel, NOT DeepCNNShortModel)
 # ============================================================
-SHORT_FIXED_EPOCHS = 14    # Best epoch from calibrated run (stopped 54, best 14)
+SHORT_FIXED_EPOCHS = 10    # Best epoch from calibrated run (stopped 45, best 10)
 SHORT_BATCH_SIZE = 64
-SHORT_LR = 0.0005
-SHORT_NOISE_STD = 0.01
-SHORT_LABEL_SMOOTHING = 0.05
-SHORT_AUGMENT_COPIES = 3   # 4x total
-SHORT_TEMPERATURE = 1.495  # From AVAX calibrated run
+SHORT_LR = 0.0015          # Higher LR for CNNDirectionModel
+SHORT_NOISE_STD = 0.015
+SHORT_LABEL_SMOOTHING = 0.1
+SHORT_AUGMENT_COPIES = 2   # 3x total
+SHORT_TEMPERATURE = 1.489  # From AVAX calibrated run 2026-04-11
 
 
 # ============================================================
@@ -229,36 +143,17 @@ def create_long_labels(df):
 
 
 def create_short_labels(df):
-    """ATR-adaptive SHORT labels (symmetric TP/SL)."""
-    atr = ta_lib.volatility.AverageTrueRange(
-        df['high'], df['low'], df['close'], window=14
-    ).average_true_range()
-    median_atr = atr.rolling(50).median()
-
+    """Fixed-percentage SHORT labels (matches dev 03_train_short_model.py)."""
     labels = []
     for i in range(len(df)):
         if i >= len(df) - 1:
             labels.append(-1)
             continue
         entry = df.iloc[i]['close']
-        cur_atr = atr.iloc[i]
-        if pd.notna(cur_atr) and cur_atr > 0:
-            tp_dist = cur_atr * SHORT_ATR_TP_MULT
-            sl_dist = cur_atr * SHORT_ATR_SL_MULT
-        else:
-            tp_dist = entry * SHORT_FIXED_TP_PCT
-            sl_dist = entry * SHORT_FIXED_SL_PCT
-        tp = entry - tp_dist  # SHORT TP = price drops
-        sl = entry + sl_dist  # SHORT SL = price rises
-        med = median_atr.iloc[i] if pd.notna(median_atr.iloc[i]) and median_atr.iloc[i] > 0 else cur_atr
-        if pd.notna(med) and med > 0:
-            vol_ratio = cur_atr / med
-            lookahead = int(SHORT_BASE_LOOKAHEAD * max(0.5, min(2.0, vol_ratio * SHORT_ATR_LOOKAHEAD_MULT + 0.3)))
-        else:
-            lookahead = SHORT_BASE_LOOKAHEAD
-        lookahead = max(5, min(20, lookahead))
+        tp = entry * (1 - SHORT_TP_PCT)   # Price drops = TP
+        sl = entry * (1 + SHORT_SL_PCT)   # Price rises = SL
         hit_tp, hit_sl = False, False
-        for j in range(i + 1, min(i + 1 + lookahead, len(df))):
+        for j in range(i + 1, min(i + 1 + SHORT_LOOKAHEAD, len(df))):
             if df.iloc[j]['low'] <= tp:
                 hit_tp = True
                 break
@@ -524,7 +419,7 @@ def train_short_cnn():
     logger.info(f"Features: {FEATURE_DIM} ({len(base_features)} base + {FEATURE_DIM - len(base_features)} bear)")
 
     # Labels
-    logger.info(f"Creating SHORT labels (ATR TP={SHORT_ATR_TP_MULT}x, SL={SHORT_ATR_SL_MULT}x)...")
+    logger.info(f"Creating SHORT labels (Fixed TP={SHORT_TP_PCT:.1%} drop, SL={SHORT_SL_PCT:.1%} rise)...")
     df['label'] = create_short_labels(df)
     n1 = (df['label'] == 1).sum()
     n0 = (df['label'] == 0).sum()
@@ -560,29 +455,24 @@ def train_short_cnn():
         aug_labels.append(train_labels)
     train_seqs_aug = np.concatenate(aug_seqs)
     train_labels_aug = np.concatenate(aug_labels)
-    logger.info(f"After augmentation: {len(train_seqs_aug)} (4x)")
-
-    # Class weights
-    w0 = len(train_labels) / (2 * n_0) if n_0 > 0 else 1.0
-    w1 = len(train_labels) / (2 * n_1) if n_1 > 0 else 1.0
+    logger.info(f"After augmentation: {len(train_seqs_aug)} (3x)")
 
     train_loader = DataLoader(
         TensorDataset(torch.FloatTensor(train_seqs_aug), torch.LongTensor(train_labels_aug)),
         batch_size=SHORT_BATCH_SIZE, shuffle=True
     )
 
-    # Model - DeepCNNShortModel for AVAX SHORT
+    # Model - CNNDirectionModel for AVAX SHORT (DeepCNN was too complex, didn't converge)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
+    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel (SHORT) | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(
-        weight=torch.FloatTensor([w0, w1]).to(device),
         label_smoothing=SHORT_LABEL_SMOOTHING
     )
     optimizer = optim.AdamW(model.parameters(), lr=SHORT_LR, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
 
     logger.info(f"Training {SHORT_FIXED_EPOCHS} fixed epochs (no early stopping)...")
     for epoch in range(SHORT_FIXED_EPOCHS):
@@ -598,10 +488,10 @@ def train_short_cnn():
         'model_state_dict': model.state_dict(),
         'feature_dim': FEATURE_DIM,
         'sequence_length': SEQUENCE_LENGTH,
-        'model_type': 'deep_cnn_short',
+        'model_type': 'cnn',  # CNNDirectionModel (not deep_cnn_short)
         'temperature': SHORT_TEMPERATURE,
-        'short_atr_tp_mult': SHORT_ATR_TP_MULT,
-        'short_atr_sl_mult': SHORT_ATR_SL_MULT,
+        'short_tp_pct': SHORT_TP_PCT,
+        'short_sl_pct': SHORT_SL_PCT,
         'production_retrain': True,
         'epochs_trained': SHORT_FIXED_EPOCHS,
     }, SHORT_MODEL_DIR / 'AVAX_short_model.pt')
