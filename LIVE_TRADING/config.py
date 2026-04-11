@@ -82,6 +82,8 @@ COINS = {
         'timeframes': ['4h', '1d', '1w'],
         'long_conf': 0.60,    # V3: optimizer Q1 2026 (60.5% WR, +64.8%)
         'short_conf': 0.50,   # V3: optimizer Q1 2026
+        'long_meta_conf': 0.45,   # V3: XGBoost meta threshold LONG
+        'short_meta_conf': 0.0,   # V3: meta pass-through SHORT
         'v3': True,
         'data_start': '2020-09-01',
     },
