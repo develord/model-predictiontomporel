@@ -151,6 +151,23 @@ COINS = {
         'v3': True,
         'data_start': '2020-10-15',
     },
+    'MATIC': {
+        'pair': 'MATIC/USDT',
+        'long_model': 'matic_cnn_model.pt',
+        'short_model': 'matic_short_cnn_model.pt',
+        'long_scaler': 'matic_feature_scaler.joblib',
+        'short_scaler': 'matic_short_feature_scaler.joblib',
+        'long_features': 'matic_features.json',
+        'short_features': 'matic_short_features.json',
+        'timeframes': ['4h', '1d', '1w'],
+        'long_conf': 0.60,    # Seuil plus strict pour volatilite
+        'short_conf': 0.55,   # Prudence accrue
+        'long_meta_conf': 0.50,   # Meta model validation
+        'short_meta_conf': 0.50,  # Meta model validation
+        'position_size_pct': 0.05,  # 5% position (prudent)
+        'v3': True,
+        'data_start': '2021-05-01',
+    },
 }
 
 # Trading parameters
