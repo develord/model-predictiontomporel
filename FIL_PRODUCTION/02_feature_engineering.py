@@ -99,7 +99,7 @@ def create_cross_tf_features(df):
     rsi_cols = [c for c in df.columns if c.endswith('_rsi_14')]
     if len(rsi_cols) >= 2:
         df['rsi_bullish_count'] = sum((df[c] > 50).astype(int) for c in rsi_cols)
-        df['rsi_overfild_count'] = sum((df[c] < 30).astype(int) for c in rsi_cols)
+        df['rsi_oversold_count'] = sum((df[c] < 30).astype(int) for c in rsi_cols)
         df['rsi_overbought_count'] = sum((df[c] > 70).astype(int) for c in rsi_cols)
 
     # MACD alignment

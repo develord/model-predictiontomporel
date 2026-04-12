@@ -45,15 +45,15 @@ TP_PCT = 0.015
 SL_PCT = 0.0075
 
 # Thresholds (per direction)
-LONG_CONF = 0.60
-SHORT_CONF = 0.55  # V6 model
+LONG_CONF = 0.55
+SHORT_CONF = 0.55
 
 # Filters
 MAX_CONSEC_LOSSES = 2
 COOLDOWN_DAYS = 5
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-03-24'
+BACKTEST_END = '2026-04-11'
 
 
 def load_model(model_dir, model_file):
@@ -228,7 +228,7 @@ def backtest():
     short_sl = short_ckpt.get('short_sl_pct', 0.010) if short_ckpt else 0.010
     logger.info(f"SHORT params: TP={short_tp:.1%} drop, SL={short_sl:.1%} rise")
 
-    df = pd.read_csv(DATA_DIR / 'fil_multi_tf_merged.csv')
+    df = pd.read_csv(DATA_DIR / 'fil_features.csv')
     df['date'] = pd.to_datetime(df['date'])
 
     # Add bear features for SHORT model

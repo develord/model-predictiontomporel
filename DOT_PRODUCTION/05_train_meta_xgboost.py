@@ -66,8 +66,9 @@ def load_cnn_model(model_dir, model_file):
     feat_dim = ckpt.get('feature_dim', 99)
     seq_len = ckpt.get('sequence_length', 30)
     model_type = ckpt.get('model_type', 'cnn')
-    # Auto-detect DeepCNNShortModel by state_dict keys
-    is_deep = model_type == 'deep_cnn_short' or any('conv3_1' in k or 'conv9_1' in k for k in ckpt['model_state_dict'].keys())
+    # Auto-detect by state_dict keys (more reliable than model_type string)
+    keys = set(ckpt['model_state_dict'].keys())
+    is_deep = any('conv3_1' in k or 'conv9_1' in k for k in keys)
     if is_deep:
         model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
     else:

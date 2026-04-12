@@ -69,7 +69,7 @@
   "rsi_diff_1d_1w",
   "rsi_diff_4h_1w",
   "rsi_bullish_count",
-  "rsi_overdotd_count",
+  "rsi_oversold_count",
   "rsi_overbought_count",
   "macd_bullish_count",
   "momentum_bullish_count",

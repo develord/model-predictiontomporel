@@ -134,7 +134,7 @@ META_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 # Shared params
 # ============================================================
 SEQUENCE_LENGTH = 30
-SHORT_SEQUENCE_LENGTH = 45
+SHORT_SEQUENCE_LENGTH = 30
 GRAD_CLIP = 0.5
 
 # ATR labeling (LONG)
@@ -156,24 +156,24 @@ SHORT_ATR_LOOKAHEAD_MULT = 0.7
 # ============================================================
 # LONG CNN params
 # ============================================================
-LONG_FIXED_EPOCHS = 1      # Best epoch from calibrated run
+LONG_FIXED_EPOCHS = 60     # Best epoch 57 from dev + buffer
 LONG_BATCH_SIZE = 64
 LONG_LR = 0.0015
 LONG_NOISE_STD = 0.015
 LONG_LABEL_SMOOTHING = 0.1
 LONG_AUGMENT_COPIES = 2    # 3x total (original + 2 copies)
-LONG_TEMPERATURE = 2.109   # From FIL calibrated run (2.108952)
+LONG_TEMPERATURE = 1.8807  # From FIL dev calibrated run
 
 # ============================================================
 # SHORT CNN params
 # ============================================================
-SHORT_FIXED_EPOCHS = 4     # Best epoch from calibrated run
-SHORT_BATCH_SIZE = 64
-SHORT_LR = 0.0005
-SHORT_NOISE_STD = 0.01
-SHORT_LABEL_SMOOTHING = 0.1
+SHORT_FIXED_EPOCHS = 17    # Best epoch 14 from dev + buffer
+SHORT_BATCH_SIZE = 32
+SHORT_LR = 0.001
+SHORT_NOISE_STD = 0.02
+SHORT_LABEL_SMOOTHING = 0.05
 SHORT_AUGMENT_COPIES = 3   # 4x total
-SHORT_TEMPERATURE = 2.157  # From FIL calibrated run (2.157389)
+SHORT_TEMPERATURE = 1.9515 # From FIL dev calibrated run
 
 
 # ============================================================
@@ -577,18 +577,17 @@ def train_short_cnn():
         batch_size=SHORT_BATCH_SIZE, shuffle=True
     )
 
-    # Model - DeepCNNShortModel for FIL SHORT
+    # Model - CNNDirectionModel for FIL SHORT (matches dev training)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SHORT_SEQUENCE_LENGTH, dropout=0.35).to(device)
+    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SHORT_SEQUENCE_LENGTH, dropout=0.4).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel (SHORT, seq={SHORT_SEQUENCE_LENGTH}) | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: CNNDirectionModel (SHORT, seq={SHORT_SEQUENCE_LENGTH}) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(
-        weight=torch.FloatTensor([w0, w1]).to(device),
         label_smoothing=SHORT_LABEL_SMOOTHING
     )
     optimizer = optim.AdamW(model.parameters(), lr=SHORT_LR, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
 
     # Sanity check: test forward pass
     model.eval()
@@ -599,7 +598,7 @@ def train_short_cnn():
         if torch.isnan(test_out).any():
             logger.error("Model produces NaN on forward pass! Reinitializing with different seed...")
             torch.manual_seed(42)
-            model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SHORT_SEQUENCE_LENGTH, dropout=0.35).to(device)
+            model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SHORT_SEQUENCE_LENGTH, dropout=0.4).to(device)
             test_out2 = model(test_x)
             logger.info(f"After reinit: test output={test_out2}, any NaN={torch.isnan(test_out2).any()}")
             optimizer = optim.AdamW(model.parameters(), lr=SHORT_LR, weight_decay=5e-4)
@@ -620,7 +619,7 @@ def train_short_cnn():
         'model_state_dict': model.state_dict(),
         'feature_dim': FEATURE_DIM,
         'sequence_length': SHORT_SEQUENCE_LENGTH,
-        'model_type': 'deep_cnn_short',
+        'model_type': 'cnn_direction',
         'temperature': SHORT_TEMPERATURE,
         'short_atr_tp_mult': SHORT_ATR_TP_MULT,
         'short_atr_sl_mult': SHORT_ATR_SL_MULT,
