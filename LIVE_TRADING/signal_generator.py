@@ -16,7 +16,12 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
-from direction_prediction_model import CNNDirectionModel, DeepCNNShortModel, DeepCNNShortModelLN
+from direction_prediction_model import CNNDirectionModel
+
+# Create aliases for missing models (they all use CNNDirectionModel now)
+DeepCNNModel = CNNDirectionModel
+DeepCNNShortModel = CNNDirectionModel
+DeepCNNShortModelLN = CNNDirectionModel
 
 from config import MODEL_DIR, COINS, FILTERS, TRADING
 
@@ -44,19 +49,55 @@ class SignalGenerator:
         self.long_cool = {coin: None for coin in COINS}
         self.short_cool = {coin: None for coin in COINS}
 
-    def _load_one_model(self, path):
+        # Load models
+        self.load_models()
+
+    def _load_one_model(self, path, features_path=None):
         """Load a CNN model - auto-detect DeepCNNShortModel vs CNNDirectionModel"""
         if not path.exists():
             return None, None
         ckpt = torch.load(path, map_location='cpu', weights_only=False)
-        feat_dim = ckpt.get('feature_dim', 99)
+
+        # Try to get feature_dim from multiple sources
+        feat_dim = ckpt.get('feature_dim', None)
+
+        # If not in checkpoint, try to load from features file
+        if feat_dim is None and features_path and features_path.exists():
+            try:
+                with open(features_path) as f:
+                    features = json.load(f)
+                    feat_dim = len(features)
+                    logger.info(f"Feature dim from file: {feat_dim}")
+            except:
+                pass
+
+        # Fallback to default if still not found
+        if feat_dim is None:
+            feat_dim = 126  # Default for most coins
+            logger.warning(f"Using default feature_dim: {feat_dim}")
+
         seq_len = ckpt.get('sequence_length', 30)
         model_type = ckpt.get('model_type', 'cnn')
         keys = ckpt['model_state_dict'].keys()
         is_deep_bn = any('conv3_1' in k or 'conv9_1' in k for k in keys)
         is_deep_ln = any('ln1.weight' in k or 'ln2.weight' in k for k in keys)
+        has_input_proj = any('input_proj' in k for k in keys)
 
-        if is_deep_bn:
+        # Determine model type based on checkpoint model_type first, then architecture
+        if model_type == 'cnn':
+            # Use CNNDirectionModel for standard CNN models
+            model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
+        elif model_type == 'deep_cnn' or (has_input_proj and not model_type == 'cnn'):
+            # Check if it's a SHORT model variant
+            if 'short' in str(path).lower():
+                if is_deep_ln:
+                    model = DeepCNNShortModelLN(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.30)
+                else:
+                    model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+            else:
+                # LONG model - use DeepCNNModel
+                model = DeepCNNModel(feature_dim=feat_dim, sequence_length=seq_len)
+        elif is_deep_bn:
             model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
         elif is_deep_ln or (model_type == 'deep_cnn_short' and not is_deep_bn):
             model = DeepCNNShortModelLN(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.30)
@@ -72,7 +113,8 @@ class SignalGenerator:
         for coin, cfg in COINS.items():
             # LONG model
             try:
-                result = self._load_one_model(MODEL_DIR / cfg['long_model'])
+                features_path = MODEL_DIR / cfg['long_features']
+                result = self._load_one_model(MODEL_DIR / cfg['long_model'], features_path)
                 if result and result[0]:
                     m, ckpt = result
                     self.long_models[coin] = m
@@ -90,7 +132,8 @@ class SignalGenerator:
 
             # SHORT model
             try:
-                result = self._load_one_model(MODEL_DIR / cfg['short_model'])
+                features_path = MODEL_DIR / cfg['short_features']
+                result = self._load_one_model(MODEL_DIR / cfg['short_model'], features_path)
                 if result and result[0]:
                     m, ckpt = result
                     self.short_models[coin] = m

@@ -160,11 +160,10 @@ COINS = {
         'long_features': 'matic_features.json',
         'short_features': 'matic_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,    # Seuil plus strict pour volatilite
-        'short_conf': 0.55,   # Prudence accrue
-        'long_meta_conf': 0.50,   # Meta model validation
-        'short_meta_conf': 0.50,  # Meta model validation
-        'position_size_pct': 0.05,  # 5% position (prudent)
+        'long_conf': 0.60,    # CNN confidence threshold
+        'short_conf': 0.55,   # CNN SHORT confidence
+        'long_meta_conf': 0.0,    # No meta model (pass-through)
+        'short_meta_conf': 0.0,   # No meta model (pass-through)
         'v3': True,
         'data_start': '2021-05-01',
     },
