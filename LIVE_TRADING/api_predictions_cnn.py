@@ -27,20 +27,24 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 
-from direction_prediction_model import CNNDirectionModel, DeepCNNShortModel
+from direction_prediction_model import CNNDirectionModel
+
+# Create aliases for missing models (they all use CNNDirectionModel now)
+DeepCNNShortModel = CNNDirectionModel
+DeepCNNShortModelLN = CNNDirectionModel
 
 logger = logging.getLogger(__name__)
 
 COIN_CONFIG = {
-    'bitcoin':    {'symbol': 'BTC/USDT', 'short_name': 'btc',  'long_conf': 0.75, 'short_conf': 0.55, 'long_meta_conf': 0.45, 'short_meta_conf': 0.50, 'start': '2017-01-01'},
-    'ethereum':   {'symbol': 'ETH/USDT', 'short_name': 'eth',  'long_conf': 0.60, 'short_conf': 0.55, 'start': '2018-01-01'},
-    'solana':     {'symbol': 'SOL/USDT', 'short_name': 'sol',  'long_conf': 0.60, 'short_conf': 0.55, 'start': '2020-08-01'},
-    'avalanche':  {'symbol': 'AVAX/USDT','short_name': 'avax', 'long_conf': 0.60, 'short_conf': 0.55, 'start': '2020-09-01'},
-    'xrp':        {'symbol': 'XRP/USDT', 'short_name': 'xrp',  'long_conf': 0.55, 'short_conf': 0.68, 'start': '2018-01-01'},
-    'chainlink':  {'symbol': 'LINK/USDT','short_name': 'link', 'long_conf': 0.85, 'short_conf': 0.55, 'start': '2017-12-01'},
-    'near':       {'symbol': 'NEAR/USDT','short_name': 'near', 'long_conf': 0.70, 'short_conf': 0.52, 'start': '2020-10-01'},
+    'bitcoin':    {'symbol': 'BTC/USDT', 'short_name': 'btc',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.45, 'short_meta_conf': 0.50, 'start': '2017-01-01'},
+    'ethereum':   {'symbol': 'ETH/USDT', 'short_name': 'eth',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.45, 'start': '2018-01-01'},
+    'solana':     {'symbol': 'SOL/USDT', 'short_name': 'sol',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-08-01'},
+    'avalanche':  {'symbol': 'AVAX/USDT','short_name': 'avax', 'long_conf': 0.60, 'short_conf': 0.50, 'long_meta_conf': 0.45, 'short_meta_conf': 0.0, 'start': '2020-09-01'},
+    'xrp':        {'symbol': 'XRP/USDT', 'short_name': 'xrp',  'long_conf': 0.75, 'short_conf': 0.50, 'long_meta_conf': 0.55, 'short_meta_conf': 0.0, 'start': '2018-01-01'},
+    'chainlink':  {'symbol': 'LINK/USDT','short_name': 'link', 'long_conf': 0.55, 'short_conf': 0.55, 'long_meta_conf': 0.52, 'short_meta_conf': 0.50, 'start': '2017-12-01'},
+    'near':       {'symbol': 'NEAR/USDT','short_name': 'near', 'long_conf': 0.65, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-01'},
     'filecoin':   {'symbol': 'FIL/USDT', 'short_name': 'fil',  'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-15'},
-    'polygon':    {'symbol': 'MATIC/USDT','short_name': 'matic', 'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.50, 'short_meta_conf': 0.50, 'start': '2021-05-01'},
+    'polygon':    {'symbol': 'MATIC/USDT','short_name': 'matic', 'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2021-05-01'},
 }
 
 SEQ_LEN = 30
@@ -48,8 +52,8 @@ SEQ_LEN = 30
 
 class CNNPredictionService:
     def __init__(self):
-        d1 = Path(__file__).parent.parent / 'models' / 'cnn'
-        d2 = Path(__file__).parent / 'models' / 'cnn'
+        d1 = Path(__file__).parent / 'models'
+        d2 = Path(__file__).parent.parent / 'models'
         self.models_dir = d1 if d1.exists() else d2
         self.long_models = {}
         self.short_models = {}
@@ -77,16 +81,23 @@ class CNNPredictionService:
         temperature = ckpt.get('temperature', 1.0)
         model_type = ckpt.get('model_type', 'cnn')
 
-        if model_type == 'deep_cnn_short' and is_short:
+        # Always use CNNDirectionModel for models with model_type='cnn'
+        if model_type == 'cnn':
+            model = CNNDirectionModel(feature_dim=feature_dim, sequence_length=seq_len, dropout=0.4)
+        elif model_type == 'deep_cnn_short' and is_short:
             try:
                 model = DeepCNNShortModel(feature_dim=feature_dim, sequence_length=seq_len, dropout=0.35)
-                model.load_state_dict(ckpt['model_state_dict'])
             except Exception:
                 model = CNNDirectionModel(feature_dim=feature_dim, sequence_length=seq_len, dropout=0.4)
-                model.load_state_dict(ckpt['model_state_dict'])
         else:
             model = CNNDirectionModel(feature_dim=feature_dim, sequence_length=seq_len, dropout=0.4)
+
+        try:
             model.load_state_dict(ckpt['model_state_dict'])
+        except RuntimeError as e:
+            # If loading fails, try with strict=False to ignore missing/unexpected keys
+            model.load_state_dict(ckpt['model_state_dict'], strict=False)
+            logger.warning(f"Model loaded with strict=False: {path.name}")
         model.eval()
         return model, seq_len, temperature
 
