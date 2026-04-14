@@ -16,12 +16,12 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
-from direction_prediction_model import CNNDirectionModel
+sys.path.insert(0, str(Path(__file__).parent))
+from direction_prediction_model import CNNDirectionModel, DeepCNNShortModelLN
 
-# Create aliases for missing models (they all use CNNDirectionModel now)
+# Alias for legacy model types — most coins now use CNNDirectionModel
 DeepCNNModel = CNNDirectionModel
 DeepCNNShortModel = CNNDirectionModel
-DeepCNNShortModelLN = CNNDirectionModel
 
 from config import MODEL_DIR, COINS, FILTERS, TRADING
 

@@ -31,10 +31,10 @@ COINS = {
         'long_features': 'btc_features.json',
         'short_features': 'btc_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,    # V3: optimizer Q1 2026 (59.1% WR, +83.2%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.45,   # V3: XGBoost meta threshold LONG
-        'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
+        'long_conf': 0.60,    # Backtest v1: 44% LONG WR, +4.34%
+        'short_conf': 0.55,   # Backtest v1: 53% SHORT WR
+        'long_meta_conf': 0.0,    # Disabled — not used in validated backtest
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2017-01-01',
     },
@@ -47,10 +47,10 @@ COINS = {
         'long_features': 'eth_features.json',
         'short_features': 'eth_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,    # V3: optimizer Q1 2026 (62.5% WR, +46.2%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.0,    # V3: meta LONG pass-through
-        'short_meta_conf': 0.45,  # V3: XGBoost meta threshold SHORT
+        'long_conf': 0.60,    # Backtest v2: 46% LONG WR, 85% SHORT WR, +76.05%
+        'short_conf': 0.55,   # Backtest v2
+        'long_meta_conf': 0.0,    # Disabled — not used in validated backtest
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'btc_influence': True,
         'data_start': '2018-01-01',
@@ -64,10 +64,10 @@ COINS = {
         'long_features': 'sol_features.json',
         'short_features': 'sol_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,    # V3: optimizer Q1 2026 (75.4% WR, +211.0%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.0,    # V3: meta pass-through
-        'short_meta_conf': 0.0,   # V3: meta pass-through
+        'long_conf': 0.60,    # Backtest v1 seed123: 54% LONG, 100% SHORT, +78.85%
+        'short_conf': 0.55,   # Backtest v1 seed2024
+        'long_meta_conf': 0.0,    # Disabled
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2020-08-01',
     },
@@ -80,10 +80,10 @@ COINS = {
         'long_features': 'avax_features.json',
         'short_features': 'avax_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,    # V3: optimizer Q1 2026 (60.5% WR, +64.8%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.45,   # V3: XGBoost meta threshold LONG
-        'short_meta_conf': 0.0,   # V3: meta pass-through SHORT
+        'long_conf': 0.60,    # Backtest v2: 100% LONG (4/4), 60% SHORT, +42.53%
+        'short_conf': 0.50,   # Backtest v2
+        'long_meta_conf': 0.0,    # Disabled — not used in validated backtest
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2020-09-01',
     },
@@ -96,10 +96,10 @@ COINS = {
         'long_features': 'xrp_features.json',
         'short_features': 'xrp_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.75,    # V3: optimizer Q1 2026 (71.7% WR, +143.5%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.55,   # V3: XGBoost meta threshold LONG
-        'short_meta_conf': 0.0,   # V3: NoMeta SHORT
+        'long_conf': 0.55,    # Backtest v2: 0% LONG (0/2), 61% SHORT, +66.49%
+        'short_conf': 0.55,   # Backtest v2
+        'long_meta_conf': 0.0,    # Disabled — not used in validated backtest
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2018-01-01',
     },
@@ -112,10 +112,10 @@ COINS = {
         'long_features': 'link_features.json',
         'short_features': 'link_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.55,    # V3: optimizer Q1 2026 (60.7% WR, +18.8%)
-        'short_conf': 0.55,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.52,   # V3: XGBoost meta threshold LONG
-        'short_meta_conf': 0.50,  # V3: XGBoost meta threshold SHORT
+        'long_conf': 0.85,    # Backtest v2: 0 LONG trades, 62% SHORT, +50.84%
+        'short_conf': 0.55,   # Backtest v2
+        'long_meta_conf': 0.0,    # Disabled — not used in validated backtest
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2017-12-01',
     },
@@ -128,10 +128,10 @@ COINS = {
         'long_features': 'near_features.json',
         'short_features': 'near_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.65,    # V3: optimizer Q1 2026 (64.9% WR, +43.4%)
-        'short_conf': 0.50,   # V3: optimizer Q1 2026
-        'long_meta_conf': 0.0,    # V3: meta pass-through
-        'short_meta_conf': 0.0,   # V3: meta pass-through
+        'long_conf': 0.70,    # Backtest v2: 50% LONG (8/16), 76% SHORT, +30.48%
+        'short_conf': 0.52,   # Backtest v2
+        'long_meta_conf': 0.0,    # Disabled
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2020-10-01',
     },
@@ -144,10 +144,10 @@ COINS = {
         'long_features': 'fil_features.json',
         'short_features': 'fil_short_features.json',
         'timeframes': ['4h', '1d', '1w'],
-        'long_conf': 0.60,    # Backtest Q1 2026: 60% WR, +5.64%
-        'short_conf': 0.55,   # CNN SHORT confidence threshold
-        'long_meta_conf': 0.0,    # Meta pass-through
-        'short_meta_conf': 0.0,   # Meta pass-through
+        'long_conf': 0.55,    # Backtest v1: 71% LONG (10/14), 67% SHORT, +24.39%
+        'short_conf': 0.55,   # Backtest v1
+        'long_meta_conf': 0.0,    # Disabled
+        'short_meta_conf': 0.0,   # Disabled
         'v3': True,
         'data_start': '2020-10-15',
     },

@@ -54,11 +54,11 @@ LONG_META_CONF = 0.0
 SHORT_META_CONF = 0.0
 
 # Filters
-MAX_CONSEC_LOSSES = 3
-COOLDOWN_DAYS = 5
+MAX_CONSEC_LOSSES = 2
+COOLDOWN_DAYS = 2
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-04-11'
+BACKTEST_END = '2026-04-01'
 
 
 def load_model(model_dir, model_file):
@@ -70,9 +70,14 @@ def load_model(model_dir, model_file):
     seq_len = ckpt.get('sequence_length', 30)
     model_type = ckpt.get('model_type', 'cnn')
 
-    is_deep = model_type == 'deep_cnn_short' or any('conv3_1' in k or 'conv9_1' in k for k in ckpt['model_state_dict'].keys())
+    keys = ckpt['model_state_dict'].keys()
+    is_deep = any('conv3_1' in k or 'conv9_1' in k for k in keys)
+    is_ln = any('ln1.weight' in k for k in keys)
     if is_deep:
         model = DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+    elif is_ln:
+        spec = import_module('03_train_short_model')
+        model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.30)
     else:
         model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
 
@@ -196,6 +201,10 @@ def check_long_filters(row, consec, cool, date):
     if 'distance_from_sma20' in row.index and pd.notna(row['distance_from_sma20']):
         if row['distance_from_sma20'] < -0.02:
             return False, "bear_sma20"
+    # Weekly momentum (matches live bot)
+    if '1w_momentum_5' in row.index and pd.notna(row['1w_momentum_5']):
+        if row['1w_momentum_5'] < -0.10:
+            return False, "weak_weekly"
     # Volatility
     if 'volatility_regime' in row.index and pd.notna(row['volatility_regime']):
         if row['volatility_regime'] > 2.5:

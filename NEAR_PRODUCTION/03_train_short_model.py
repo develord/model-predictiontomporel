@@ -38,14 +38,14 @@ DATA_DIR = BASE_DIR / 'data' / 'cache'
 MODEL_DIR = BASE_DIR / 'models_short'
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-SEQUENCE_LENGTH = 45  # Longer to capture distribution patterns
-BATCH_SIZE = 64
+SEQUENCE_LENGTH = 30  # Shorter = more samples for small dataset
+BATCH_SIZE = 32
 EPOCHS = 250
-LEARNING_RATE = 0.0005
-PATIENCE = 40
-GRAD_CLIP = 0.5
+LEARNING_RATE = 0.002
+PATIENCE = 50
+GRAD_CLIP = 1.0
 NOISE_STD = 0.01
-LABEL_SMOOTHING = 0.1
+LABEL_SMOOTHING = 0.05
 
 # ATR-based SHORT labeling (symmetric = no bias)
 SHORT_ATR_TP_MULT = 1.5   # TP = 1.5x ATR drop
@@ -55,8 +55,8 @@ SHORT_FIXED_SL_PCT = 0.012
 SHORT_BASE_LOOKAHEAD = 10
 SHORT_ATR_LOOKAHEAD_MULT = 0.7
 
-TRAIN_END = '2025-06-30'
-VAL_START = '2025-07-01'
+TRAIN_END = '2025-09-30'
+VAL_START = '2025-10-01'
 VAL_END = '2025-12-31'
 
 
@@ -67,71 +67,69 @@ class DeepCNNShortModel(nn.Module):
     def __init__(self, feature_dim, sequence_length=45, dropout=0.35):
         super().__init__()
 
-        # Feature projection
+        # Feature projection (smaller for limited data)
         self.input_proj = nn.Sequential(
-            nn.Linear(feature_dim, 96),
+            nn.Linear(feature_dim, 64),
             nn.BatchNorm1d(sequence_length),
             nn.GELU(),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout * 0.5)
         )
 
-        # Multi-scale conv block 1
-        self.conv3_1 = nn.Conv1d(96, 48, kernel_size=3, padding=1)
-        self.conv5_1 = nn.Conv1d(96, 48, kernel_size=5, padding=2)
-        self.conv9_1 = nn.Conv1d(96, 48, kernel_size=9, padding=4)  # Wider for longer patterns
-        self.bn1 = nn.BatchNorm1d(144)
-        self.drop1 = nn.Dropout(dropout)
+        # Multi-scale conv block 1 (3, 5, 9)
+        self.conv3_1 = nn.Conv1d(64, 32, kernel_size=3, padding=1)
+        self.conv5_1 = nn.Conv1d(64, 32, kernel_size=5, padding=2)
+        self.conv9_1 = nn.Conv1d(64, 32, kernel_size=9, padding=4)
+        self.bn1 = nn.BatchNorm1d(96)
+        self.drop1 = nn.Dropout(dropout * 0.5)
 
         # Conv block 2
         self.conv2 = nn.Sequential(
-            nn.Conv1d(144, 96, kernel_size=3, padding=1),
-            nn.BatchNorm1d(96),
+            nn.Conv1d(96, 48, kernel_size=3, padding=1),
+            nn.BatchNorm1d(48),
             nn.GELU(),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout * 0.5)
         )
 
         # Conv block 3 (deeper)
         self.conv3 = nn.Sequential(
-            nn.Conv1d(96, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
+            nn.Conv1d(48, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
             nn.GELU(),
-            nn.Dropout(dropout * 0.7)
+            nn.Dropout(dropout * 0.3)
         )
 
         # Temporal attention
         self.attention = nn.Sequential(
-            nn.Linear(64, 24),
+            nn.Linear(32, 16),
             nn.Tanh(),
-            nn.Linear(24, 1)
+            nn.Linear(16, 1)
         )
 
         # Classifier
         self.classifier = nn.Sequential(
-            nn.Linear(64, 48),
+            nn.Linear(32, 24),
             nn.GELU(),
-            nn.Dropout(dropout * 0.5),
-            nn.Linear(48, 24),
-            nn.GELU(),
+            nn.Dropout(dropout * 0.3),
             nn.Linear(24, 2)
         )
 
     def forward(self, x):
-        x = self.input_proj(x)  # (B, T, 96)
-        x = x.permute(0, 2, 1)  # (B, 96, T)
+        x = self.input_proj(x)  # (B, T, 64)
+        x = x.permute(0, 2, 1)  # (B, 64, T)
 
         c3 = F.gelu(self.conv3_1(x))
         c5 = F.gelu(self.conv5_1(x))
         c9 = F.gelu(self.conv9_1(x))
-        x = torch.cat([c3, c5, c9], dim=1)  # (B, 144, T)
+        x = torch.cat([c3, c5, c9], dim=1)  # (B, 96, T)
         x = self.bn1(x)
         x = self.drop1(x)
 
-        x = self.conv2(x)  # (B, 96, T)
-        x = self.conv3(x)  # (B, 64, T)
+        x = self.conv2(x)  # (B, 48, T)
+        x = self.conv3(x)  # (B, 32, T)
 
-        x = x.permute(0, 2, 1)  # (B, T, 64)
+        x = x.permute(0, 2, 1)  # (B, T, 32)
         attn = F.softmax(self.attention(x), dim=1)
-        x = (x * attn).sum(dim=1)  # (B, 64)
+        x = (x * attn).sum(dim=1)  # (B, 32)
 
         return self.classifier(x)
 
@@ -330,15 +328,28 @@ def train():
 
     # Model - DeepCNNShortModel
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DeepCNNShortModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.35).to(device)
+    from direction_prediction_model import CNNDirectionModel
+    model = CNNDirectionModel(feature_dim=FEATURE_DIM, sequence_length=SEQUENCE_LENGTH, dropout=0.4).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: DeepCNNShortModel | Params: {n_params:,} | Device: {device}")
+    logger.info(f"Model: CNNDirectionModel (SHORT) | Params: {n_params:,} | Device: {device}")
 
     criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor([w0, w1]).to(device), label_smoothing=LABEL_SMOOTHING)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
 
     best_acc, patience_cnt, best_epoch = 0, 0, 0
+
+    # Save initial checkpoint so final eval doesn't crash if no improvement
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'feature_dim': FEATURE_DIM,
+        'sequence_length': SEQUENCE_LENGTH,
+        'model_type': 'cnn_short',
+        'short_atr_tp_mult': SHORT_ATR_TP_MULT,
+        'short_atr_sl_mult': SHORT_ATR_SL_MULT,
+        'epoch': 0,
+        'val_acc': 0,
+    }, MODEL_DIR / 'NEAR_short_model.pt')
 
     for epoch in range(EPOCHS):
         model.train()
@@ -380,7 +391,7 @@ def train():
                 'model_state_dict': model.state_dict(),
                 'feature_dim': FEATURE_DIM,
                 'sequence_length': SEQUENCE_LENGTH,
-                'model_type': 'deep_cnn_short',
+                'model_type': 'cnn_short',
                 'short_atr_tp_mult': SHORT_ATR_TP_MULT,
                 'short_atr_sl_mult': SHORT_ATR_SL_MULT,
                 'epoch': epoch + 1,

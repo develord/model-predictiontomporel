@@ -50,10 +50,10 @@ SHORT_CONF = 0.55  # SHORT performs well on LINK
 
 # Filters
 MAX_CONSEC_LOSSES = 2
-COOLDOWN_DAYS = 5
+COOLDOWN_DAYS = 2
 
 BACKTEST_START = '2026-01-01'
-BACKTEST_END = '2026-04-03'
+BACKTEST_END = '2026-04-01'
 
 
 def load_model(model_dir, model_file):
@@ -65,10 +65,17 @@ def load_model(model_dir, model_file):
     seq_len = ckpt.get('sequence_length', 30)
     model_type = ckpt.get('model_type', 'cnn')
 
-    if model_type == 'deep_cnn_short':
-        # Import DeepCNNShortModel
+    # Auto-detect architecture from state_dict keys (same as signal_generator.py)
+    keys = ckpt['model_state_dict'].keys()
+    is_deep = any('conv3_1' in k or 'conv9_1' in k for k in keys)
+    is_ln = any('ln1.weight' in k for k in keys)
+    if is_deep:
         spec = import_module('03_train_short_model')
         model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.35)
+    elif is_ln:
+        # LINK uses DeepCNNShortModel with LayerNorm (no deep conv keys)
+        spec = import_module('03_train_short_model')
+        model = spec.DeepCNNShortModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.30)
     else:
         model = CNNDirectionModel(feature_dim=feat_dim, sequence_length=seq_len, dropout=0.4)
 
@@ -105,21 +112,17 @@ def fetch_15min():
 
 
 def get_tp_sl(row, entry, direction, s_tp=0.020, s_sl=0.010):
+    """ATR-based symmetric TP/SL for V3 (matches live bot signal_generator.py)"""
     atr = row.get('1d_atr_14', None)
+    ATR_MULT = 1.5
+    if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
+        tp_m = min(max(ATR_MULT * atr / entry, 0.008), 0.04)
+        sl_m = tp_m  # Symmetric
+    else:
+        tp_m, sl_m = 0.012, 0.012
     if direction == 'LONG':
-        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-            tp_m = min(max(atr / entry, 0.008), 0.03)
-            sl_m = tp_m * 0.5
-        else:
-            tp_m, sl_m = TP_PCT, SL_PCT
         return entry * (1 + tp_m), entry * (1 - sl_m)
     else:
-        # SHORT uses its own TP/SL from training
-        if USE_DYNAMIC_TP_SL and atr and pd.notna(atr) and atr > 0:
-            tp_m = min(max(atr / entry, 0.01), 0.04)
-            sl_m = tp_m * 0.5
-        else:
-            tp_m, sl_m = s_tp, s_sl
         return entry * (1 - tp_m), entry * (1 + sl_m)
 
 
@@ -156,11 +159,15 @@ def check_long_filters(row, consec, cool, date):
         return False, "weak_momentum"
     # Bear market
     if 'distance_from_sma50' in row.index and pd.notna(row['distance_from_sma50']):
-        if row['distance_from_sma50'] < -0.12:
+        if row['distance_from_sma50'] < -0.05:
             return False, "bear_sma50"
     if 'distance_from_sma20' in row.index and pd.notna(row['distance_from_sma20']):
-        if row['distance_from_sma20'] < -0.05:
+        if row['distance_from_sma20'] < -0.02:
             return False, "bear_sma20"
+    # Weekly momentum (matches live bot)
+    if '1w_momentum_5' in row.index and pd.notna(row['1w_momentum_5']):
+        if row['1w_momentum_5'] < -0.10:
+            return False, "weak_weekly"
     # Volatility
     if 'volatility_regime' in row.index and pd.notna(row['volatility_regime']):
         if row['volatility_regime'] > 2.5:
@@ -207,14 +214,14 @@ def backtest():
     logger.info(f"{'='*70}\n")
 
     # Load models
-    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'link_cnn_model.pt')
+    long_model, long_seq, long_ckpt = load_model(LONG_MODEL_DIR, 'LINK_direction_model.pt')
     short_model, short_seq, short_ckpt = load_model(SHORT_MODEL_DIR, 'LINK_short_model.pt')
     if not long_model or not short_model:
         logger.error("Missing model(s)")
         return
 
     # LONG features
-    with open(BASE_DIR / 'models/link_cnn_features.json') as f:
+    with open(BASE_DIR / 'required_features.json') as f:
         long_feature_cols = json.load(f)
 
     # SHORT features (may include bear-specific features)
@@ -227,7 +234,10 @@ def backtest():
     # Get SHORT TP/SL from checkpoint
     short_tp = short_ckpt.get('short_tp_pct', 0.020) if short_ckpt else 0.020
     short_sl = short_ckpt.get('short_sl_pct', 0.010) if short_ckpt else 0.010
+    long_temp = long_ckpt.get('temperature', 1.0) if long_ckpt else 1.0
+    short_temp = short_ckpt.get('temperature', 1.0) if short_ckpt else 1.0
     logger.info(f"SHORT params: TP={short_tp:.1%} drop, SL={short_sl:.1%} rise")
+    logger.info(f"Temperature: LONG={long_temp:.3f}, SHORT={short_temp:.3f}")
 
     df = pd.read_csv(DATA_DIR / 'link_features.csv')
     df['date'] = pd.to_datetime(df['date'])
@@ -283,17 +293,21 @@ def backtest():
         if position is not None:
             continue  # Already in a trade
 
-        # LONG prediction
+        # LONG prediction (with temperature-calibrated confidence)
         lx = torch.tensor(long_feat[wi-long_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            l_dir, l_conf = long_model.predict_direction(lx)
-        l_d, l_c = l_dir.item(), l_conf.item()
+            logits = long_model(lx)
+            probs = torch.softmax(logits / long_temp, dim=1)
+            l_c, l_d = torch.max(probs, dim=1)
+        l_d, l_c = l_d.item(), l_c.item()
 
-        # SHORT prediction
+        # SHORT prediction (with temperature-calibrated confidence)
         sx = torch.tensor(short_feat[wi-short_seq:wi], dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            s_dir, s_conf = short_model.predict_direction(sx)
-        s_d, s_c = s_dir.item(), s_conf.item()
+            logits = short_model(sx)
+            probs = torch.softmax(logits / short_temp, dim=1)
+            s_c, s_d = torch.max(probs, dim=1)
+        s_d, s_c = s_d.item(), s_c.item()
 
         # Try LONG first (priority)
         if l_d == 1 and l_c >= LONG_CONF:
