@@ -45,7 +45,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 amount INTEGER NOT NULL,
-                type TEXT NOT NULL CHECK(type IN ('earn_ad', 'spend_view', 'bonus_signup')),
+                type TEXT NOT NULL CHECK(type IN ('earn_ad', 'earn_ad_ssv', 'spend_view', 'bonus_signup')),
                 crypto TEXT,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             )
@@ -61,6 +61,41 @@ async def init_db():
                 UNIQUE(user_id, fcm_token)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ssv_rewards (
+                transaction_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        # Migration: recreate credit_transactions if CHECK constraint is outdated
+        # (SQLite doesn't support ALTER TABLE to modify constraints)
+        cursor = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='credit_transactions'"
+        )
+        row = await cursor.fetchone()
+        if row and row[0] and 'earn_ad_ssv' not in row[0]:
+            logger.info("Migrating credit_transactions table to add earn_ad_ssv type...")
+            await db.execute("ALTER TABLE credit_transactions RENAME TO credit_transactions_old")
+            await db.execute("""
+                CREATE TABLE credit_transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    amount INTEGER NOT NULL,
+                    type TEXT NOT NULL CHECK(type IN ('earn_ad', 'earn_ad_ssv', 'spend_view', 'bonus_signup')),
+                    crypto TEXT,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute("""
+                INSERT INTO credit_transactions (id, user_id, amount, type, crypto, timestamp)
+                SELECT id, user_id, amount, type, crypto, timestamp FROM credit_transactions_old
+            """)
+            await db.execute("DROP TABLE credit_transactions_old")
+            logger.info("Migration complete: credit_transactions updated")
+
         await db.commit()
     logger.info(f"Database initialized at {DATABASE_PATH}")
 
@@ -222,6 +257,45 @@ async def get_all_device_tokens() -> list[dict]:
         cursor = await db.execute("SELECT user_id, fcm_token, platform FROM device_tokens")
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+
+async def get_ssv_reward(transaction_id: str) -> dict | None:
+    """Check if an SSV transaction was already processed (dedup)"""
+    if not transaction_id:
+        return None
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT transaction_id, user_id, amount FROM ssv_rewards WHERE transaction_id = ?",
+            (transaction_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {"transaction_id": row[0], "user_id": row[1], "amount": row[2]}
+        return None
+
+
+async def record_ssv_reward(transaction_id: str, user_id: int, amount: int):
+    """Record an SSV transaction to prevent duplicates"""
+    if not transaction_id:
+        return
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO ssv_rewards (transaction_id, user_id, amount, processed_at) VALUES (?, ?, ?, ?)",
+            (transaction_id, user_id, amount, now)
+        )
+        await db.commit()
+
+
+async def get_last_ssv_time(user_id: int) -> str | None:
+    """Get timestamp of last SSV reward for a user (for dedup with client-side earn)"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT processed_at FROM ssv_rewards WHERE user_id = ? ORDER BY processed_at DESC LIMIT 1",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
 
 
 async def get_last_earn_time(user_id: int) -> str | None:
