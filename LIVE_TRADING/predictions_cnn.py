@@ -27,33 +27,32 @@ from direction_prediction_model import CNNDirectionModel, DeepCNNShortModel, Dee
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# COIN CONFIGS — Exactly match optimizer results
+# COIN CONFIGS — Synced with bot config.py (2026-04-16)
 # ============================================================================
-# BTC optimizer: WR:59.1% Ret:+83.2% LCNN>=0.55 SCNN>=0.50 LMeta>=0.45 SMeta>=0.50 CD:5 MC:3
-# ETH optimizer: WR:62.5% Ret:+46.2% LCNN>=0.55 SCNN>=0.50 LMeta>=0.00 SMeta>=0.45 CD:5 MC:3
+# All meta_conf disabled (0.0) — v3 uses CNN-only thresholds
+# Cooldown and max_consec_losses from bot FILTERS config
 COIN_CONFIG = {
     'bitcoin': {
         'symbol': 'BTC/USDT', 'short_name': 'btc',
-        'long_conf': 0.55, 'short_conf': 0.50,
-        'long_meta_conf': 0.45, 'short_meta_conf': 0.50,
-        'cooldown_days': 5, 'max_consec_losses': 3,
+        'long_conf': 0.60, 'short_conf': 0.55,
+        'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
+        'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2017-01-01', 'v3': True,
     },
     'ethereum': {
         'symbol': 'ETH/USDT', 'short_name': 'eth',
-        'long_conf': 0.55, 'short_conf': 0.50,
-        'long_meta_conf': 0.0, 'short_meta_conf': 0.45,
-        'cooldown_days': 5, 'max_consec_losses': 3,
+        'long_conf': 0.60, 'short_conf': 0.55,
+        'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
+        'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2018-01-01', 'v3': True, 'btc_influence': True,
     },
     'solana': {
         'symbol': 'SOL/USDT', 'short_name': 'sol',
-        'long_conf': 0.55, 'short_conf': 0.50,
+        'long_conf': 0.60, 'short_conf': 0.55,
         'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2020-08-01', 'v3': True,
     },
-    'dogecoin':  {'symbol': 'DOGE/USDT', 'short_name': 'doge', 'long_conf': 0.60, 'short_conf': 0.55, 'start': '2019-07-01'},
     'avalanche': {
         'symbol': 'AVAX/USDT', 'short_name': 'avax',
         'long_conf': 0.60, 'short_conf': 0.50,
@@ -63,39 +62,38 @@ COIN_CONFIG = {
     },
     'xrp': {
         'symbol': 'XRP/USDT', 'short_name': 'xrp',
-        'long_conf': 0.75, 'short_conf': 0.50,
-        'long_meta_conf': 0.55, 'short_meta_conf': 0.0,
+        'long_conf': 0.55, 'short_conf': 0.55,
+        'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2018-01-01', 'v3': True,
     },
     'chainlink': {
         'symbol': 'LINK/USDT', 'short_name': 'link',
-        'long_conf': 0.55, 'short_conf': 0.55,
-        'long_meta_conf': 0.52, 'short_meta_conf': 0.50,
+        'long_conf': 0.85, 'short_conf': 0.55,
+        'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2017-12-01', 'v3': True,
     },
-    'cardano':   {'symbol': 'ADA/USDT',  'short_name': 'ada',  'long_conf': 0.65, 'short_conf': 0.55, 'start': '2018-04-01'},
     'near': {
         'symbol': 'NEAR/USDT', 'short_name': 'near',
-        'long_conf': 0.65, 'short_conf': 0.50,
+        'long_conf': 0.70, 'short_conf': 0.52,
         'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
         'start': '2020-10-01', 'v3': True,
     },
-    'polkadot': {
-        'symbol': 'DOT/USDT', 'short_name': 'dot',
+    'filecoin': {
+        'symbol': 'FIL/USDT', 'short_name': 'fil',
         'long_conf': 0.55, 'short_conf': 0.55,
         'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
-        'start': '2020-08-20', 'v3': True,
+        'start': '2020-10-15', 'v3': True,
     },
-    'filecoin': {
-        'symbol': 'FIL/USDT', 'short_name': 'fil',
+    'polygon': {
+        'symbol': 'MATIC/USDT', 'short_name': 'matic',
         'long_conf': 0.60, 'short_conf': 0.55,
         'long_meta_conf': 0.0, 'short_meta_conf': 0.0,
         'cooldown_days': 2, 'max_consec_losses': 2,
-        'start': '2020-10-15', 'v3': True,
+        'start': '2021-05-01', 'v3': True,
     },
 }
 
@@ -726,8 +724,9 @@ class CNNPredictionService:
             risk_management = self._get_dynamic_tp_sl(raw_row, price, direction, crypto_id)
 
         symbol_map = {'bitcoin': 'BTCUSDT', 'ethereum': 'ETHUSDT', 'solana': 'SOLUSDT',
-                      'dogecoin': 'DOGEUSDT', 'avalanche': 'AVAXUSDT', 'xrp': 'XRPUSDT',
-                      'chainlink': 'LINKUSDT', 'cardano': 'ADAUSDT', 'near': 'NEARUSDT', 'polkadot': 'DOTUSDT', 'filecoin': 'FILUSDT'}
+                      'avalanche': 'AVAXUSDT', 'xrp': 'XRPUSDT',
+                      'chainlink': 'LINKUSDT', 'near': 'NEARUSDT', 'filecoin': 'FILUSDT',
+                      'polygon': 'MATICUSDT'}
 
         return {
             "crypto": crypto_id,
