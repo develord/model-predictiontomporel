@@ -121,7 +121,7 @@ async def api_key_middleware(request: Request, call_next):
     """Verify X-API-Key header on all requests except health and public endpoints"""
     path = request.url.path
     exempt_exact = {"/health", "/"}
-    exempt_prefixes = ("/api/analysis/", "/api/news", "/api/credits", "/auth/", "/api/notifications/signal-webhook", "/api/notifications/history")
+    exempt_prefixes = ("/api/analysis/", "/api/news", "/api/credits", "/auth/", "/api/notifications/signal-webhook", "/api/notifications/close-signal", "/api/notifications/history")
 
     if path in exempt_exact or path == "/api/analysis" or path == "/api/news" or any(path.startswith(p) for p in exempt_prefixes):
         return await call_next(request)

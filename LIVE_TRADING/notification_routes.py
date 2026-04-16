@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, status
 from pydantic import BaseModel
 
 from auth import get_current_user
-from database import save_device_token, get_all_device_tokens, remove_device_token
+from database import save_device_token, get_all_device_tokens, remove_device_token, create_signal, close_signal, get_signal_history, get_signal_stats
 from notification_service import send_signal_notification
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,14 @@ async def signal_webhook(payload: SignalWebhookPayload, request: Request):
 
     logger.info(f"Signal webhook: {payload.coin} {payload.direction} {payload.confidence:.1%}")
 
+    # Persist signal to database
+    signal_id = await create_signal(
+        coin=payload.coin, direction=payload.direction,
+        confidence=payload.confidence, entry_price=payload.price,
+        tp_pct=payload.tp_pct, sl_pct=payload.sl_pct
+    )
+    logger.info(f"Signal stored: id={signal_id}")
+
     tokens = await get_all_device_tokens()
     if not tokens:
         logger.info("No device tokens registered, skipping push")
@@ -77,3 +85,36 @@ async def signal_webhook(payload: SignalWebhookPayload, request: Request):
 
     logger.info(f"Push sent: {sent} success, {len(failed)} removed")
     return {"status": "ok", "sent": sent, "removed": len(failed)}
+
+
+class CloseSignalPayload(BaseModel):
+    coin: str
+    direction: str  # LONG or SHORT
+    result: str     # TP, SL, CLOSED
+    exit_price: float
+    pnl_pct: float
+
+
+@router.post("/close-signal", summary="Bot posts trade close here")
+async def close_signal_webhook(payload: CloseSignalPayload, request: Request):
+    """Called by the live trading bot when a position is closed (TP/SL/timeout).
+    Updates the stored signal with the result."""
+    bot_secret = request.headers.get("X-Bot-Secret", "")
+    if not BOT_WEBHOOK_SECRET or not hmac.compare_digest(bot_secret, BOT_WEBHOOK_SECRET):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    signal_id = await close_signal(
+        coin=payload.coin, direction=payload.direction,
+        result=payload.result, exit_price=payload.exit_price,
+        pnl_pct=payload.pnl_pct
+    )
+    logger.info(f"Signal closed: {payload.coin} {payload.direction} → {payload.result} ({payload.pnl_pct:+.2f}%) id={signal_id}")
+    return {"status": "ok", "signal_id": signal_id}
+
+
+@router.get("/history", summary="Get signal history")
+async def signal_history(coin: str | None = None, limit: int = 100):
+    """Return signal history + stats for the app. No auth required (public data)."""
+    signals = await get_signal_history(coin=coin, limit=limit)
+    stats = await get_signal_stats(coin=coin)
+    return {"signals": signals, "stats": stats}

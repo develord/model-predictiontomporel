@@ -17,9 +17,10 @@ TRADE_LOG = STATE_DIR / 'trade_log.json'
 
 
 class PositionManager:
-    def __init__(self):
+    def __init__(self, on_close_callback=None):
         self.positions = {}  # {coin: position_info}
         self.trade_history = []
+        self.on_close_callback = on_close_callback  # Called with (coin, direction, exit_type, exit_price, pnl_pct)
         self._load_state()
 
     def _load_state(self):
@@ -101,6 +102,13 @@ class PositionManager:
         self._save_trade(trade)
 
         logger.info(f"{coin}: Position closed ({exit_type}) @ {exit_price} | PnL: {pnl_pct:+.2f}%")
+
+        # Notify API to update signal history
+        if self.on_close_callback:
+            try:
+                self.on_close_callback(coin, pos['direction'], exit_type, exit_price, pnl_pct)
+            except Exception as e:
+                logger.warning(f"{coin}: Close callback failed: {e}")
 
         del self.positions[coin]
         self._save_state()

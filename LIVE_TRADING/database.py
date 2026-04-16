@@ -62,6 +62,22 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                coin TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                entry_price REAL NOT NULL,
+                tp_pct REAL NOT NULL,
+                sl_pct REAL NOT NULL,
+                result TEXT,
+                exit_price REAL,
+                pnl_pct REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                closed_at TEXT
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS ssv_rewards (
                 transaction_id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -307,3 +323,84 @@ async def get_last_earn_time(user_id: int) -> str | None:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+
+# ============================================================
+# SIGNALS
+# ============================================================
+
+async def create_signal(coin: str, direction: str, confidence: float,
+                        entry_price: float, tp_pct: float, sl_pct: float) -> int:
+    """Store a new signal, return its ID"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO signals (coin, direction, confidence, entry_price, tp_pct, sl_pct, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (coin, direction, confidence, entry_price, tp_pct, sl_pct, datetime.utcnow().isoformat())
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def close_signal(coin: str, direction: str, result: str,
+                       exit_price: float, pnl_pct: float):
+    """Close the most recent open signal for a coin+direction"""
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Find the latest open signal for this coin+direction
+        cursor = await db.execute(
+            """SELECT id FROM signals
+               WHERE coin = ? AND direction = ? AND result IS NULL
+               ORDER BY created_at DESC LIMIT 1""",
+            (coin, direction)
+        )
+        row = await cursor.fetchone()
+        if row:
+            await db.execute(
+                """UPDATE signals SET result = ?, exit_price = ?, pnl_pct = ?, closed_at = ?
+                   WHERE id = ?""",
+                (result, exit_price, pnl_pct, now, row[0])
+            )
+            await db.commit()
+            return row[0]
+    return None
+
+
+async def get_signal_history(coin: str | None = None, limit: int = 100) -> list[dict]:
+    """Get signal history, newest first. Optionally filter by coin."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if coin:
+            cursor = await db.execute(
+                """SELECT id, coin, direction, confidence, entry_price as price,
+                          tp_pct, sl_pct, result, exit_price, pnl_pct,
+                          created_at, closed_at
+                   FROM signals WHERE coin = ? ORDER BY created_at DESC LIMIT ?""",
+                (coin, limit)
+            )
+        else:
+            cursor = await db.execute(
+                """SELECT id, coin, direction, confidence, entry_price as price,
+                          tp_pct, sl_pct, result, exit_price, pnl_pct,
+                          created_at, closed_at
+                   FROM signals ORDER BY created_at DESC LIMIT ?""",
+                (limit,)
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_signal_stats(coin: str | None = None) -> dict:
+    """Compute signal stats (wins, losses, pending, win_rate, avg_pnl)"""
+    signals = await get_signal_history(coin, limit=10000)
+    total = len(signals)
+    wins = sum(1 for s in signals if s['result'] == 'TP')
+    losses = sum(1 for s in signals if s['result'] == 'SL')
+    pending = sum(1 for s in signals if s['result'] is None)
+    closed = [s for s in signals if s['pnl_pct'] is not None]
+    avg_pnl = round(sum(s['pnl_pct'] for s in closed) / len(closed), 2) if closed else 0
+    win_rate = round(wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+    return {
+        'total': total, 'wins': wins, 'losses': losses,
+        'pending': pending, 'avg_pnl': avg_pnl, 'win_rate': win_rate
+    }

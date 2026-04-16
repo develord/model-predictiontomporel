@@ -47,7 +47,7 @@ class LiveTradingSystem:
         self.data_mgr = DataManager()
         self.signal_gen = SignalGenerator()
         self.executor = TradeExecutor()
-        self.pos_mgr = PositionManager()
+        self.pos_mgr = PositionManager(on_close_callback=self._notify_close)
         # Pre-fill today's date for all coins so bot never trades on startup
         # Only a real new 1d candle close (next day) will trigger trades
         _today = datetime.utcnow().strftime('%Y-%m-%d')
@@ -108,6 +108,23 @@ class LiveTradingSystem:
             logger.info(f"{coin}: Push notification sent ({direction})")
         except Exception as e:
             logger.warning(f"{coin}: Push notification failed: {e}")
+
+    def _notify_close(self, coin, direction, result, exit_price, pnl_pct):
+        """POST signal close to API to update signal history"""
+        api_url = os.getenv('API_WEBHOOK_URL', 'http://127.0.0.1:8080/api/notifications/signal-webhook')
+        close_url = api_url.replace('signal-webhook', 'close-signal')
+        secret = os.getenv('BOT_WEBHOOK_SECRET', '')
+        if not secret:
+            return
+        try:
+            _requests.post(close_url, json={
+                'coin': coin, 'direction': direction,
+                'result': result, 'exit_price': exit_price,
+                'pnl_pct': round(pnl_pct, 2),
+            }, headers={'X-Bot-Secret': secret}, timeout=5)
+            logger.info(f"{coin}: Signal close notified ({result} {pnl_pct:+.2f}%)")
+        except Exception as e:
+            logger.warning(f"{coin}: Signal close notification failed: {e}")
 
     def _sync_exchange_state(self):
         """Reconcile local state with Binance positions on startup"""
