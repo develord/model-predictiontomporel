@@ -67,14 +67,15 @@ async def spend_on_prediction(request: SpendCreditsRequest, current_user: dict =
     """Spend credits to view a crypto prediction"""
     user_id = current_user["id"]
 
-    new_balance = await spend_credits(user_id, 3, request.crypto)
+    amount = request.amount if request.amount in (1, 3) else 3
+    new_balance = await spend_credits(user_id, amount, request.crypto)
     if new_balance is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Insufficient credits. Watch an ad to earn more."
         )
 
-    logger.info(f"User {user_id} spent 3 credits on {request.crypto}, balance: {new_balance}")
+    logger.info(f"User {user_id} spent {amount} credits on {request.crypto}, balance: {new_balance}")
 
     return {"success": True, "balance": new_balance, "crypto": request.crypto}
 
