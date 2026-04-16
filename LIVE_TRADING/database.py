@@ -367,7 +367,9 @@ async def close_signal(coin: str, direction: str, result: str,
 
 
 async def get_signal_history(coin: str | None = None, limit: int = 100) -> list[dict]:
-    """Get signal history, newest first. Optionally filter by coin."""
+    """Get signal history, newest first. Optionally filter by coin.
+    Only returns signals from 2026-04-15 onwards (new bot config deployment)."""
+    cutoff = '2026-04-15T00:00:00'
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         if coin:
@@ -375,16 +377,16 @@ async def get_signal_history(coin: str | None = None, limit: int = 100) -> list[
                 """SELECT id, coin, direction, confidence, entry_price as price,
                           tp_pct, sl_pct, result, exit_price, pnl_pct,
                           created_at, closed_at
-                   FROM signals WHERE coin = ? ORDER BY created_at DESC LIMIT ?""",
-                (coin, limit)
+                   FROM signals WHERE coin = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?""",
+                (coin, cutoff, limit)
             )
         else:
             cursor = await db.execute(
                 """SELECT id, coin, direction, confidence, entry_price as price,
                           tp_pct, sl_pct, result, exit_price, pnl_pct,
                           created_at, closed_at
-                   FROM signals ORDER BY created_at DESC LIMIT ?""",
-                (limit,)
+                   FROM signals WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?""",
+                (cutoff, limit)
             )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]

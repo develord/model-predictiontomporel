@@ -36,14 +36,14 @@ DeepCNNShortModelLN = CNNDirectionModel
 logger = logging.getLogger(__name__)
 
 COIN_CONFIG = {
-    'bitcoin':    {'symbol': 'BTC/USDT', 'short_name': 'btc',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.45, 'short_meta_conf': 0.50, 'start': '2017-01-01'},
-    'ethereum':   {'symbol': 'ETH/USDT', 'short_name': 'eth',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.45, 'start': '2018-01-01'},
-    'solana':     {'symbol': 'SOL/USDT', 'short_name': 'sol',  'long_conf': 0.55, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-08-01'},
-    'avalanche':  {'symbol': 'AVAX/USDT','short_name': 'avax', 'long_conf': 0.60, 'short_conf': 0.50, 'long_meta_conf': 0.45, 'short_meta_conf': 0.0, 'start': '2020-09-01'},
-    'xrp':        {'symbol': 'XRP/USDT', 'short_name': 'xrp',  'long_conf': 0.75, 'short_conf': 0.50, 'long_meta_conf': 0.55, 'short_meta_conf': 0.0, 'start': '2018-01-01'},
-    'chainlink':  {'symbol': 'LINK/USDT','short_name': 'link', 'long_conf': 0.55, 'short_conf': 0.55, 'long_meta_conf': 0.52, 'short_meta_conf': 0.50, 'start': '2017-12-01'},
-    'near':       {'symbol': 'NEAR/USDT','short_name': 'near', 'long_conf': 0.65, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-01'},
-    'filecoin':   {'symbol': 'FIL/USDT', 'short_name': 'fil',  'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-15'},
+    'bitcoin':    {'symbol': 'BTC/USDT', 'short_name': 'btc',  'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2017-01-01'},
+    'ethereum':   {'symbol': 'ETH/USDT', 'short_name': 'eth',  'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2018-01-01'},
+    'solana':     {'symbol': 'SOL/USDT', 'short_name': 'sol',  'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-08-01'},
+    'avalanche':  {'symbol': 'AVAX/USDT','short_name': 'avax', 'long_conf': 0.60, 'short_conf': 0.50, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-09-01'},
+    'xrp':        {'symbol': 'XRP/USDT', 'short_name': 'xrp',  'long_conf': 0.55, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2018-01-01'},
+    'chainlink':  {'symbol': 'LINK/USDT','short_name': 'link', 'long_conf': 0.85, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2017-12-01'},
+    'near':       {'symbol': 'NEAR/USDT','short_name': 'near', 'long_conf': 0.70, 'short_conf': 0.52, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-01'},
+    'filecoin':   {'symbol': 'FIL/USDT', 'short_name': 'fil',  'long_conf': 0.55, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2020-10-15'},
     'polygon':    {'symbol': 'MATIC/USDT','short_name': 'matic', 'long_conf': 0.60, 'short_conf': 0.55, 'long_meta_conf': 0.0, 'short_meta_conf': 0.0, 'start': '2021-05-01'},
 }
 
